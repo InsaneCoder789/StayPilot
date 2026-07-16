@@ -1,0 +1,50 @@
+<svg width="1600" height="620" viewBox="0 0 1600 620" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="75" y1="24" x2="1512" y2="620" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#171C18"/>
+      <stop offset="0.52" stop-color="#0D100E"/>
+      <stop offset="1" stop-color="#111814"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientTransform="translate(1275 90) rotate(132) scale(591 485)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8EB69B" stop-opacity="0.24"/>
+      <stop offset="1" stop-color="#8EB69B" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="52" height="52" patternUnits="userSpaceOnUse">
+      <path d="M52 0H0V52" stroke="#8EB69B" stroke-opacity="0.06"/>
+    </pattern>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="20" stdDeviation="28" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <rect width="1600" height="620" rx="32" fill="url(#bg)"/>
+  <rect width="1600" height="620" rx="32" fill="url(#glow)"/>
+  <rect width="1600" height="620" rx="32" fill="url(#grid)"/>
+  <path d="M0 470C255 410 390 548 655 482C938 412 1100 287 1600 340V620H0V470Z" fill="#8EB69B" fill-opacity="0.035"/>
+  <rect x="84" y="72" width="184" height="42" rx="21" fill="#8EB69B" fill-opacity="0.11" stroke="#8EB69B" stroke-opacity="0.35"/>
+  <circle cx="110" cy="93" r="5" fill="#8EB69B"/>
+  <text x="127" y="100" fill="#B9D0C0" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" letter-spacing="2">HOTEL OS</text>
+  <text x="80" y="260" fill="#F0F2ED" font-family="Georgia, 'Times New Roman', serif" font-size="118" font-weight="700" letter-spacing="-5">StayPilot</text>
+  <text x="86" y="320" fill="#A4AAA3" font-family="Arial, Helvetica, sans-serif" font-size="27" letter-spacing="1">ONE OPERATING SYSTEM. EVERY HOTEL WORKFLOW.</text>
+  <rect x="86" y="380" width="640" height="1" fill="#8EB69B" fill-opacity="0.45"/>
+  <text x="86" y="426" fill="#D5DAD4" font-family="Arial, Helvetica, sans-serif" font-size="20">Front desk  ·  Rooms  ·  Housekeeping  ·  Billing  ·  Access</text>
+  <text x="86" y="462" fill="#D5DAD4" font-family="Arial, Helvetica, sans-serif" font-size="20">PostgreSQL-backed  ·  Role-aware  ·  Built for daily operations</text>
+  <g filter="url(#shadow)">
+    <rect x="1045" y="138" width="405" height="342" rx="28" fill="#171A18" stroke="#2A2F2B"/>
+    <rect x="1081" y="174" width="333" height="54" rx="13" fill="#202420"/>
+    <circle cx="1111" cy="201" r="8" fill="#8EB69B"/>
+    <rect x="1133" y="192" width="131" height="8" rx="4" fill="#F0F2ED" fill-opacity="0.82"/>
+    <rect x="1133" y="207" width="82" height="6" rx="3" fill="#A4AAA3" fill-opacity="0.5"/>
+    <rect x="1081" y="252" width="156" height="88" rx="14" fill="#111412" stroke="#2A2F2B"/>
+    <rect x="1258" y="252" width="156" height="88" rx="14" fill="#111412" stroke="#2A2F2B"/>
+    <text x="1101" y="281" fill="#A4AAA3" font-family="Arial, Helvetica, sans-serif" font-size="11" letter-spacing="1">ROOMS READY</text>
+    <text x="1101" y="319" fill="#F0F2ED" font-family="Georgia, serif" font-size="30" font-weight="700">101</text>
+    <text x="1278" y="281" fill="#A4AAA3" font-family="Arial, Helvetica, sans-serif" font-size="11" letter-spacing="1">FLOORS</text>
+    <text x="1278" y="319" fill="#C9A86A" font-family="Georgia, serif" font-size="30" font-weight="700">20</text>
+    <rect x="1081" y="363" width="333" height="81" rx="14" fill="#111412" stroke="#2A2F2B"/>
+    <rect x="1102" y="386" width="166" height="8" rx="4" fill="#8EB69B" fill-opacity="0.85"/>
+    <rect x="1102" y="405" width="277" height="6" rx="3" fill="#2A2F2B"/>
+    <rect x="1102" y="405" width="224" height="6" rx="3" fill="#8EB69B" fill-opacity="0.45"/>
+  </g>
+  <text x="86" y="561" fill="#747B75" font-family="Arial, Helvetica, sans-serif" font-size="15" letter-spacing="2">STAYPILOT / OPERATIONS CONTROL</text>
+  <rect x="1" y="1" width="1598" height="618" rx="31" stroke="#8EB69B" stroke-opacity="0.16" stroke-width="2"/>
+</svg>
