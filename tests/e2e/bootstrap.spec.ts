@@ -238,3 +238,52 @@ test("operations lifecycle controls tasks, incidents, custody, procurement, and 
     await db.$disconnect();
   }
 });
+
+test("document lifecycle persists originals, generates PDFs, templates messages, and tracks delivery", async ({ request }) => {
+  const email = "e2e-documents@staypilot.invalid";
+  const templateName = "E2E Arrival Letter";
+  const db = getDb();
+  await db.loginAttempt.deleteMany({ where: { email } });
+  await db.documentTemplate.deleteMany({ where: { name: templateName } });
+  await db.user.deleteMany({ where: { email } });
+
+  try {
+    expect((await request.post("/api/auth/bootstrap", { data: { name: "E2E Documents", email, password: "StayPilot!Documents2026" } })).ok()).toBe(true);
+    const command = async (action: string, payload: Record<string, unknown> = {}) => {
+      const response = await request.post("/api/hotel/command", { data: { action, payload } });
+      return response.json() as Promise<{ ok: boolean; message: string; state?: {
+        documents: Array<{ id: string; title: string; downloadable: boolean; sizeBytes?: number }>;
+        documentTemplates: Array<{ name: string; content: string }>;
+        communications: Array<{ recipient: string; status: string }>;
+      } }>;
+    };
+
+    let result = await command("createInvoice", { guestName: "Document Guest", bookingCode: "DOC-FOLIO", lineItems: [{ label: "Room charge", amount: 125 }] });
+    const generated = result.state!.documents.find((document) => document.title.startsWith("Invoice "))!;
+    const generatedDownload = await request.get(`/api/documents/${generated.id}/download`);
+    expect(generatedDownload.ok()).toBe(true);
+    expect(generatedDownload.headers()["content-type"]).toBe("application/pdf");
+    expect((await generatedDownload.body()).subarray(0, 4).toString()).toBe("%PDF");
+
+    const originalBytes = Buffer.from("StayPilot controlled document\nLine two\n", "utf8");
+    const upload = await request.post("/api/documents", { multipart: { title: "E2E Control Note", type: "OTHER", linkedRef: "E2E-DOC-001", file: { name: "control-note.txt", mimeType: "text/plain", buffer: originalBytes } } });
+    expect(upload.ok()).toBe(true);
+    const uploadBody = await upload.json() as { documentId: string };
+    const originalDownload = await request.get(`/api/documents/${uploadBody.documentId}/download`);
+    expect(originalDownload.ok()).toBe(true);
+    expect(await originalDownload.body()).toEqual(originalBytes);
+
+    result = await command("createDocumentTemplate", { name: templateName, type: "GUEST_FORM", subject: "Your arrival", content: "Welcome to the hotel. Your reservation is confirmed." });
+    expect(result.state!.documentTemplates[0]).toMatchObject({ name: templateName });
+    result = await command("sendCommunication", { channel: "EMAIL", recipient: "guest@staypilot.invalid", subject: "Your arrival", body: "Welcome to the hotel.", linkedRef: "DOC-FOLIO" });
+    expect(result.ok).toBe(true);
+    expect(result.state!.communications[0]).toMatchObject({ recipient: "guest@staypilot.invalid", status: "DRAFT" });
+  } finally {
+    const reset = await request.post("/api/hotel/command", { data: { action: "resetHotelData", payload: {} } });
+    expect(reset.ok()).toBe(true);
+    await db.documentTemplate.deleteMany({ where: { name: templateName } });
+    await db.loginAttempt.deleteMany({ where: { email } });
+    await db.user.deleteMany({ where: { email } });
+    await db.$disconnect();
+  }
+});

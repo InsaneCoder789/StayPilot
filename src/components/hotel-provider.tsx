@@ -23,7 +23,7 @@ import type {
 } from "@/lib/hotel-data";
 import { initialHotelSnapshot } from "@/lib/hotel-data";
 
-type CommandResult = { ok: boolean; message: string; invoiceId?: string; receiptId?: string; requiresMfa?: boolean; resetUrl?: string; invitationUrl?: string; secret?: string; uri?: string; url?: string };
+type CommandResult = { ok: boolean; message: string; invoiceId?: string; receiptId?: string; documentId?: string; requiresMfa?: boolean; resetUrl?: string; invitationUrl?: string; secret?: string; uri?: string; url?: string };
 type BookingInput = { guestName: string; phone: string; email: string; roomType: string; checkIn: string; checkOut: string; source: string; specialRequests: string; totalAmount: number; depositRequired?: number; companyName?: string };
 type ComplaintInput = { guestName: string; roomNumber?: string; message: string };
 type MaintenanceInput = { roomNumber?: string; title: string; category: string; assignee: string; priority: MaintenanceTicketRecord["priority"]; description: string; vendorName?: string };
@@ -91,7 +91,10 @@ type HotelContextType = {
   recordNfcEvent: (cardId: string, event: NfcAccessEventRecord["event"], location?: string) => Promise<CommandResult>;
   addBlueprintZone: (input: BlueprintZoneInput) => Promise<CommandResult>;
   removeBlueprintZone: (blueprintId: string, zoneId: string) => Promise<CommandResult>;
-  addDocument: (document: Omit<DocumentRecord, "id" | "createdAt">) => Promise<CommandResult>;
+  addDocument: (document: Pick<DocumentRecord, "title" | "type" | "linkedRef">) => Promise<CommandResult>;
+  uploadDocument: (input: { file: File; title: string; type: DocumentRecord["type"]; linkedRef: string }) => Promise<CommandResult>;
+  createDocumentTemplate: (input: { name: string; type: DocumentRecord["type"]; subject?: string; content: string }) => Promise<CommandResult>;
+  sendCommunication: (input: { channel: "EMAIL" | "SMS" | "WHATSAPP"; recipient: string; subject?: string; body: string; linkedRef?: string }) => Promise<CommandResult>;
   addInventoryItem: (input: InventoryInput) => Promise<CommandResult>;
   adjustInventoryItem: (itemId: string, nextStock: number) => Promise<CommandResult>;
   createOperationalTask: (input: { department: string; title: string; description: string; priority: NotificationInput["severity"]; assignee?: string; dueAt?: string }) => Promise<CommandResult>;
@@ -240,6 +243,19 @@ export function HotelProvider({ children }: { children: ReactNode }) {
     addBlueprintZone: (input) => command("addBlueprintZone", input),
     removeBlueprintZone: (blueprintId, zoneId) => command("removeBlueprintZone", { blueprintId, zoneId }),
     addDocument: (document) => command("addDocument", document),
+    async uploadDocument(input) {
+      const form = new FormData();
+      form.set("file", input.file);
+      form.set("title", input.title);
+      form.set("type", input.type);
+      form.set("linkedRef", input.linkedRef);
+      const response = await fetch("/api/documents", { method: "POST", body: form });
+      const result = await response.json() as CommandResult;
+      if (result.ok) await refresh();
+      return result;
+    },
+    createDocumentTemplate: (input) => command("createDocumentTemplate", input),
+    sendCommunication: (input) => command("sendCommunication", input),
     addInventoryItem: (input) => command("addInventoryItem", input),
     adjustInventoryItem: (itemId, nextStock) => command("adjustInventoryItem", { itemId, nextStock }),
     createOperationalTask: (input) => command("createOperationalTask", input),

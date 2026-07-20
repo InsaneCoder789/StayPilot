@@ -123,6 +123,20 @@ enum LostFoundStatus {
   DISPOSED
 }
 
+enum CommunicationChannel {
+  EMAIL
+  SMS
+  WHATSAPP
+}
+
+enum CommunicationStatus {
+  DRAFT
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+}
+
 enum InvoiceStatus {
   UNPAID
   PARTIAL
@@ -320,6 +334,8 @@ model Hotel {
   inventoryMovements InventoryMovement[]
   incidents          Incident[]
   lostFoundItems     LostFoundItem[]
+  documentTemplates  DocumentTemplate[]
+  communications     Communication[]
 }
 
 model DocumentSequence {
@@ -1003,6 +1019,8 @@ model Document {
   storageKey String?
   checksum   String?
   sizeBytes  Int?
+  content    Bytes?
+  uploadedBy String?
   metadata   Json?
   createdAt  DateTime     @default(now())
   updatedAt  DateTime     @updatedAt
@@ -1010,6 +1028,46 @@ model Document {
 
   @@index([hotelId, type, createdAt])
   @@index([hotelId, linkedRef])
+}
+
+model DocumentTemplate {
+  id        String       @id @default(cuid())
+  hotelId   String
+  name      String
+  type      DocumentType
+  subject   String?
+  content   String
+  active    Boolean      @default(true)
+  createdBy String
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  hotel     Hotel        @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+
+  @@unique([hotelId, name])
+  @@index([hotelId, type, active])
+}
+
+model Communication {
+  id                String               @id @default(cuid())
+  hotelId           String
+  channel           CommunicationChannel
+  recipient         String
+  subject           String?
+  body              String
+  status            CommunicationStatus  @default(DRAFT)
+  provider          String?
+  providerMessageId String?
+  linkedRef         String?
+  error             String?
+  createdBy         String
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  hotel             Hotel                @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+
+  @@index([hotelId, status, createdAt])
+  @@index([hotelId, recipient, createdAt])
 }
 
 model Notification {

@@ -308,6 +308,35 @@ export type DocumentRecord = {
   type: "INVOICE" | "CREDIT_NOTE" | "POLICY" | "GUEST_FORM" | "ROOM_CARD_LOG" | "AUDIT" | "HANDOVER" | "RECEIPT" | "BLUEPRINT" | "OTHER";
   linkedRef: string;
   createdAt: string;
+  fileName?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  downloadable: boolean;
+};
+
+export type DocumentTemplateRecord = {
+  id: string;
+  name: string;
+  type: DocumentRecord["type"];
+  subject?: string;
+  content: string;
+  active: boolean;
+  createdBy: string;
+  updatedAt: string;
+};
+
+export type CommunicationRecord = {
+  id: string;
+  channel: "EMAIL" | "SMS" | "WHATSAPP";
+  recipient: string;
+  subject?: string;
+  body: string;
+  status: "DRAFT" | "QUEUED" | "SENT" | "DELIVERED" | "FAILED";
+  provider?: string;
+  linkedRef?: string;
+  error?: string;
+  createdBy: string;
+  createdAt: string;
 };
 
 export type NotificationRecord = {
@@ -480,6 +509,8 @@ export type HotelSnapshot = {
   blueprints: BlueprintRecord[];
   paymentGateways: PaymentGatewayRecord[];
   documents: DocumentRecord[];
+  documentTemplates: DocumentTemplateRecord[];
+  communications: CommunicationRecord[];
   notifications: NotificationRecord[];
   auditLogs: AuditLogRecord[];
   inventory: InventoryItemRecord[];
@@ -645,6 +676,8 @@ export const initialHotelSnapshot: HotelSnapshot = {
     },
   ],
   documents: [],
+  documentTemplates: [],
+  communications: [],
   notifications: [],
   auditLogs: [],
   inventory: [

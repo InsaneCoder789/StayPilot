@@ -18,10 +18,10 @@ type Result = { ok: boolean; message: string; invoiceId?: string; receiptId?: st
 const roleCommands: Record<User["role"], string[] | "*"> = {
   HOTEL_ADMIN: "*",
   MANAGER: "*",
-  RECEPTIONIST: ["setRoomStatus", "createBooking", "assignBookingRoom", "updateBookingDates", "cancelBooking", "markBookingNoShow", "checkInBooking", "checkOutBooking", "extendStay", "moveRoom", "createGroupReservation", "createComplaint", "updateComplaintStatus", "createOperationalTask", "updateOperationalTask", "createIncident", "updateIncident", "createLostFoundItem", "updateLostFoundItem", "createInvoice", "recordPayment", "openCashierShift", "recordCashMovement", "closeCashierShift", "updateGuestNotes", "issueRoomCard", "updateRoomCardStatus", "recordNfcEvent", "addDocument", "addNotification", "markNotificationRead", "createHandover"],
+  RECEPTIONIST: ["setRoomStatus", "createBooking", "assignBookingRoom", "updateBookingDates", "cancelBooking", "markBookingNoShow", "checkInBooking", "checkOutBooking", "extendStay", "moveRoom", "createGroupReservation", "createComplaint", "updateComplaintStatus", "createOperationalTask", "updateOperationalTask", "createIncident", "updateIncident", "createLostFoundItem", "updateLostFoundItem", "createInvoice", "recordPayment", "openCashierShift", "recordCashMovement", "closeCashierShift", "sendCommunication", "updateGuestNotes", "issueRoomCard", "updateRoomCardStatus", "recordNfcEvent", "addDocument", "addNotification", "markNotificationRead", "createHandover"],
   HOUSEKEEPING: ["setRoomStatus", "updateHousekeepingStatus", "createOperationalTask", "updateOperationalTask", "createLostFoundItem", "updateLostFoundItem", "addInventoryItem", "adjustInventoryItem", "addNotification", "markNotificationRead", "createHandover"],
   MAINTENANCE: ["setRoomStatus", "createMaintenanceTicket", "updateMaintenanceStatus", "createOperationalTask", "updateOperationalTask", "createIncident", "updateIncident", "addInventoryItem", "adjustInventoryItem", "addVendor", "addDocument", "addNotification", "markNotificationRead", "createHandover"],
-  ACCOUNTANT: ["createInvoice", "recordPayment", "refundPayment", "createCreditNote", "openCashierShift", "recordCashMovement", "closeCashierShift", "reconcilePayments", "createPurchaseOrder", "updatePurchaseOrderStatus", "receivePurchaseOrder", "togglePaymentGateway", "addDocument", "markNotificationRead", "runNightAudit"],
+  ACCOUNTANT: ["createInvoice", "recordPayment", "refundPayment", "createCreditNote", "openCashierShift", "recordCashMovement", "closeCashierShift", "reconcilePayments", "createPurchaseOrder", "updatePurchaseOrderStatus", "receivePurchaseOrder", "createDocumentTemplate", "sendCommunication", "togglePaymentGateway", "addDocument", "markNotificationRead", "runNightAudit"],
 };
 
 export function canExecuteHotelCommand(role: User["role"], action: string) {
@@ -32,6 +32,7 @@ export function canExecuteHotelCommand(role: User["role"], action: string) {
 const text = (payload: Payload, key: string) => String(payload[key] ?? "").trim();
 const number = (payload: Payload, key: string) => Number(payload[key] ?? 0);
 const date = (value: unknown) => new Date(`${String(value)}T12:00:00.000Z`);
+const statefulSubject = (reference: string) => reference ? `StayPilot update · ${reference}` : "Update from your hotel";
 
 async function audit(
   tx: Prisma.TransactionClient,
@@ -536,6 +537,34 @@ export async function executeHotelCommand(actor: Actor, action: string, payload:
     case "addDocument":
       await db.document.create({ data: { hotelId: actor.hotelId, title: text(payload, "title"), type: text(payload, "type") as "INVOICE" | "POLICY" | "GUEST_FORM" | "ROOM_CARD_LOG" | "AUDIT" | "HANDOVER" | "RECEIPT" | "BLUEPRINT" | "OTHER", linkedRef: text(payload, "linkedRef") } });
       return { ok: true, message: "Document record added." };
+    case "createDocumentTemplate": {
+      if (!text(payload, "name") || !text(payload, "content")) return { ok: false, message: "Template name and content are required." };
+      const template = await db.documentTemplate.upsert({ where: { hotelId_name: { hotelId: actor.hotelId, name: text(payload, "name") } }, create: { hotelId: actor.hotelId, name: text(payload, "name"), type: text(payload, "type") as "INVOICE" | "CREDIT_NOTE" | "POLICY" | "GUEST_FORM" | "ROOM_CARD_LOG" | "AUDIT" | "HANDOVER" | "RECEIPT" | "BLUEPRINT" | "OTHER", subject: text(payload, "subject") || null, content: text(payload, "content"), createdBy: actor.name }, update: { type: text(payload, "type") as "INVOICE" | "CREDIT_NOTE" | "POLICY" | "GUEST_FORM" | "ROOM_CARD_LOG" | "AUDIT" | "HANDOVER" | "RECEIPT" | "BLUEPRINT" | "OTHER", subject: text(payload, "subject") || null, content: text(payload, "content"), active: true } });
+      await db.auditLog.create({ data: { hotelId: actor.hotelId, userId: actor.id, actorName: actor.name, action: "UPSERT_DOCUMENT_TEMPLATE", entityType: "DocumentTemplate", entityId: template.id, target: template.name } });
+      return { ok: true, message: "Document template saved." };
+    }
+    case "sendCommunication": {
+      const channel = text(payload, "channel") as "EMAIL" | "SMS" | "WHATSAPP";
+      const recipient = text(payload, "recipient");
+      const body = text(payload, "body");
+      if (!["EMAIL", "SMS", "WHATSAPP"].includes(channel) || !recipient || !body) return { ok: false, message: "Channel, recipient, and message are required." };
+      if (channel === "EMAIL" && !/^\S+@\S+\.\S+$/.test(recipient)) return { ok: false, message: "Enter a valid recipient email." };
+      const apiKey = channel === "EMAIL" ? process.env.RESEND_API_KEY : undefined;
+      const communication = await db.communication.create({ data: { hotelId: actor.hotelId, channel, recipient, subject: text(payload, "subject") || null, body, status: apiKey ? "QUEUED" : "DRAFT", provider: apiKey ? "RESEND" : null, linkedRef: text(payload, "linkedRef") || null, createdBy: actor.name } });
+      if (!apiKey) return { ok: true, message: `${channel.replaceAll("_", " ")} draft saved. Configure its provider to send.` };
+      try {
+        const response = await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", "Idempotency-Key": communication.id }, body: JSON.stringify({ from: process.env.RESEND_FROM_EMAIL ?? "StayPilot <onboarding@resend.dev>", to: [recipient], subject: text(payload, "subject") || statefulSubject(text(payload, "linkedRef")), text: body }) });
+        const responseBody = await response.json() as { id?: string; message?: string };
+        if (!response.ok || !responseBody.id) throw new Error(responseBody.message || `Provider returned ${response.status}`);
+        await db.communication.update({ where: { id: communication.id }, data: { status: "SENT", providerMessageId: responseBody.id, sentAt: new Date() } });
+        await db.auditLog.create({ data: { hotelId: actor.hotelId, userId: actor.id, actorName: actor.name, action: "SEND_COMMUNICATION", entityType: "Communication", entityId: communication.id, target: `${channel} · ${recipient}` } });
+        return { ok: true, message: "Email accepted by the delivery provider." };
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message.slice(0, 500) : "Provider delivery failed";
+        await db.communication.update({ where: { id: communication.id }, data: { status: "FAILED", error: errorMessage } });
+        return { ok: false, message: "Delivery failed and was recorded for retry." };
+      }
+    }
     case "createOperationalTask": {
       const title = text(payload, "title");
       const department = text(payload, "department");
@@ -699,6 +728,7 @@ export async function executeHotelCommand(actor: Actor, action: string, payload:
     case "resetHotelData": {
       if (actor.role !== "HOTEL_ADMIN") return { ok: false, message: "Only the hotel administrator can reset operational data." };
       await db.$transaction(async (tx) => {
+        await tx.communication.deleteMany({ where: { hotelId: actor.hotelId } });
         await tx.inventoryMovement.deleteMany({ where: { hotelId: actor.hotelId } });
         await tx.purchaseOrder.deleteMany({ where: { hotelId: actor.hotelId } });
         await tx.operationalTask.deleteMany({ where: { hotelId: actor.hotelId } });
