@@ -163,6 +163,19 @@ enum IntegrationSyncStatus {
   IGNORED
 }
 
+enum ReportFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+enum ReportRunStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
 enum InvoiceStatus {
   UNPAID
   PARTIAL
@@ -365,6 +378,8 @@ model Hotel {
   nfcDevices         NfcDevice[]
   nfcCommands        NfcCommand[]
   integrationSyncs   IntegrationSyncLog[]
+  reportSchedules    ReportSchedule[]
+  reportRuns         ReportRun[]
 }
 
 model DocumentSequence {
@@ -1067,6 +1082,45 @@ model IntegrationSyncLog {
   @@unique([provider, operation, externalId])
   @@index([hotelId, status, createdAt])
   @@index([hotelId, provider, createdAt])
+}
+
+model ReportSchedule {
+  id         String          @id @default(cuid())
+  hotelId    String
+  name       String
+  reportType String
+  frequency  ReportFrequency
+  recipients Json
+  active     Boolean         @default(true)
+  nextRunAt  DateTime
+  lastRunAt  DateTime?
+  createdBy  String
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+  hotel      Hotel           @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  runs       ReportRun[]
+
+  @@index([active, nextRunAt])
+  @@index([hotelId, active, nextRunAt])
+}
+
+model ReportRun {
+  id          String          @id @default(cuid())
+  hotelId     String
+  scheduleId  String?
+  reportType  String
+  status      ReportRunStatus @default(PENDING)
+  periodStart DateTime
+  periodEnd   DateTime
+  payload     Json?
+  error       String?
+  startedAt   DateTime        @default(now())
+  completedAt DateTime?
+  hotel       Hotel           @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  schedule    ReportSchedule? @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+
+  @@index([hotelId, startedAt])
+  @@index([scheduleId, startedAt])
 }
 
 model Blueprint {

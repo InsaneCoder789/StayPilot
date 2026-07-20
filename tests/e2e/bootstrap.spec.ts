@@ -358,3 +358,44 @@ test("integration bridge authenticates NFC hardware and idempotent OTA, POS, and
     await db.$disconnect();
   }
 });
+
+test("reporting lifecycle calculates server metrics, exports data, and runs scheduled packs", async ({ request }) => {
+  const email = "e2e-reporting@staypilot.invalid";
+  const db = getDb();
+  await db.loginAttempt.deleteMany({ where: { email } });
+  await db.user.deleteMany({ where: { email } });
+
+  try {
+    expect((await request.post("/api/auth/bootstrap", { data: { name: "E2E Reporting", email, password: "StayPilot!Reporting2026" } })).ok()).toBe(true);
+    const stateResponse = await request.get("/api/hotel/state");
+    const state = (await stateResponse.json() as { state: { rooms: Array<{ roomType: string }> } }).state;
+    const checkIn = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
+    const checkOut = new Date(Date.now() + 4 * 86_400_000).toISOString().slice(0, 10);
+    expect((await request.post("/api/hotel/command", { data: { action: "createBooking", payload: { guestName: "Forecast Guest", phone: "000", email: "forecast@staypilot.invalid", roomType: state.rooms[0].roomType, checkIn, checkOut, source: "DIRECT", specialRequests: "", totalAmount: 300 } } })).ok()).toBe(true);
+    expect((await request.post("/api/hotel/command", { data: { action: "createOperationalTask", payload: { department: "FRONT_DESK", title: "Overdue reporting task", description: "SLA validation", priority: "HIGH", dueAt: new Date(Date.now() - 3_600_000).toISOString() } } })).ok()).toBe(true);
+
+    const overviewResponse = await request.get("/api/reports/overview");
+    expect(overviewResponse.ok()).toBe(true);
+    const overview = await overviewResponse.json() as { report: { summary: { roomCount: number; openReceivables: number; pickup7Days: number; overdueTasks: number }; forecast: Array<{ occupancyPercent: number }> } };
+    expect(overview.report.summary).toMatchObject({ roomCount: 101, pickup7Days: 1, overdueTasks: 1 });
+    expect(overview.report.summary.openReceivables).toBeGreaterThan(0);
+    expect(overview.report.forecast.some((day) => day.occupancyPercent > 0)).toBe(true);
+    const forecastExport = await request.get("/api/reports/export?dataset=forecast");
+    expect(forecastExport.ok()).toBe(true);
+    expect(await forecastExport.text()).toContain("occupancy_percent");
+
+    const schedule = await request.post("/api/reports/schedules", { data: { name: "E2E Management Pack", reportType: "MANAGEMENT_OVERVIEW", frequency: "DAILY", recipients: ["manager@staypilot.invalid"], nextRunAt: new Date(Date.now() - 60_000).toISOString() } });
+    expect(schedule.ok()).toBe(true);
+    expect((await request.get("/api/cron/reports")).status()).toBe(401);
+    const cron = await request.get("/api/cron/reports", { headers: { Authorization: "Bearer e2e-cron-secret" } });
+    await expect(cron.json()).resolves.toMatchObject({ ok: true, processed: 1, completed: 1, failed: 0 });
+    expect(await db.reportRun.count({ where: { status: "COMPLETED" } })).toBe(1);
+    expect(await db.document.count({ where: { title: { startsWith: "E2E Management Pack" }, mimeType: "application/json" } })).toBe(1);
+    expect(await db.communication.count({ where: { recipient: "manager@staypilot.invalid", linkedRef: { not: null } } })).toBe(1);
+  } finally {
+    await request.post("/api/hotel/command", { data: { action: "resetHotelData", payload: {} } });
+    await db.loginAttempt.deleteMany({ where: { email } });
+    await db.user.deleteMany({ where: { email } });
+    await db.$disconnect();
+  }
+});

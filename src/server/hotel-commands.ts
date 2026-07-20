@@ -765,6 +765,8 @@ export async function executeHotelCommand(actor: Actor, action: string, payload:
       if (actor.role !== "HOTEL_ADMIN") return { ok: false, message: "Only the hotel administrator can reset operational data." };
       await db.$transaction(async (tx) => {
         await tx.communication.deleteMany({ where: { hotelId: actor.hotelId } });
+        await tx.reportRun.deleteMany({ where: { hotelId: actor.hotelId } });
+        await tx.reportSchedule.deleteMany({ where: { hotelId: actor.hotelId } });
         await tx.integrationSyncLog.deleteMany({ where: { hotelId: actor.hotelId } });
         await tx.nfcCommand.deleteMany({ where: { hotelId: actor.hotelId } });
         await tx.inventoryMovement.deleteMany({ where: { hotelId: actor.hotelId } });
