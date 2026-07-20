@@ -40,6 +40,7 @@ export async function POST(request: Request) {
     await tx.auditLog.create({
       data: { hotelId: hotel.id, userId: owner.id, action: "BOOTSTRAP_OWNER", actorName: owner.name, entityType: "User", entityId: owner.id, target: owner.email },
     });
+    await tx.propertyAccess.create({ data: { hotelId: hotel.id, userId: owner.id, role: owner.role } });
     return owner;
   });
   await createSession(user.id, hotel.id);

@@ -176,6 +176,41 @@ enum ReportRunStatus {
   FAILED
 }
 
+enum OutletOrderStatus {
+  OPEN
+  SENT
+  PREPARING
+  SERVED
+  POSTED
+  VOID
+}
+
+enum EventBookingStatus {
+  LEAD
+  TENTATIVE
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum AppointmentStatus {
+  BOOKED
+  CHECKED_IN
+  IN_SERVICE
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum TransportStatus {
+  REQUESTED
+  CONFIRMED
+  DISPATCHED
+  COMPLETED
+  CANCELLED
+}
+
 enum InvoiceStatus {
   UNPAID
   PARTIAL
@@ -306,80 +341,86 @@ enum RagDocumentStatus {
 }
 
 model Hotel {
-  id                 String               @id @default(cuid())
-  name               String
-  legalName          String
-  propertyCode       String               @unique
-  addressLine1       String
-  addressLine2       String?
-  city               String
-  state              String
-  postalCode         String?
-  country            String
-  currency           String               @default("AED")
-  phone              String
-  email              String
-  taxRegistrationNo  String?
-  taxRate            Decimal              @default(0) @db.Decimal(5, 2)
-  checkInTime        String
-  checkOutTime       String
-  timezone           String
-  themeMode          String               @default("dark")
-  themeAccent        String               @default("#8eb69b")
-  themeSurface       String               @default("#13191d")
-  themeSurfaceStrong String               @default("#1a2329")
-  createdAt          DateTime             @default(now())
-  updatedAt          DateTime             @updatedAt
-  users              User[]
-  sessions           Session[]
-  staffInvitations   StaffInvitation[]
-  loginAttempts      LoginAttempt[]
-  roomTypes          RoomType[]
-  rooms              Room[]
-  roomStatusLogs     RoomStatusLog[]
-  guests             Guest[]
-  groups             GroupReservation[]
-  bookings           Booking[]
-  housekeepingTasks  HousekeepingTask[]
-  maintenanceTickets MaintenanceTicket[]
-  complaints         Complaint[]
-  invoices           Invoice[]
-  payments           Payment[]
-  receipts           Receipt[]
-  policies           Policy[]
-  roomCards          RoomCard[]
-  accessEvents       NfcAccessEvent[]
-  blueprints         Blueprint[]
-  paymentGateways    PaymentGateway[]
-  documents          Document[]
-  notifications      Notification[]
-  auditLogs          AuditLog[]
-  inventoryItems     InventoryItem[]
-  vendors            Vendor[]
-  handovers          ShiftHandover[]
-  nightAudits        NightAudit[]
-  integrations       Integration[]
-  ragDocuments       RagDocument[]
-  aiInteractions     AiInteraction[]
-  documentSequences  DocumentSequence[]
-  paymentRequests    PaymentRequest[]
-  webhookEvents      WebhookEvent[]
-  cashierShifts      CashierShift[]
-  cashMovements      CashMovement[]
-  creditNotes        CreditNote[]
-  reconciliations    ReconciliationRun[]
-  operationalTasks   OperationalTask[]
-  purchaseOrders     PurchaseOrder[]
-  inventoryMovements InventoryMovement[]
-  incidents          Incident[]
-  lostFoundItems     LostFoundItem[]
-  documentTemplates  DocumentTemplate[]
-  communications     Communication[]
-  nfcDevices         NfcDevice[]
-  nfcCommands        NfcCommand[]
-  integrationSyncs   IntegrationSyncLog[]
-  reportSchedules    ReportSchedule[]
-  reportRuns         ReportRun[]
+  id                  String               @id @default(cuid())
+  name                String
+  legalName           String
+  propertyCode        String               @unique
+  addressLine1        String
+  addressLine2        String?
+  city                String
+  state               String
+  postalCode          String?
+  country             String
+  currency            String               @default("AED")
+  phone               String
+  email               String
+  taxRegistrationNo   String?
+  taxRate             Decimal              @default(0) @db.Decimal(5, 2)
+  checkInTime         String
+  checkOutTime        String
+  timezone            String
+  themeMode           String               @default("dark")
+  themeAccent         String               @default("#8eb69b")
+  themeSurface        String               @default("#13191d")
+  themeSurfaceStrong  String               @default("#1a2329")
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  users               User[]
+  sessions            Session[]
+  staffInvitations    StaffInvitation[]
+  loginAttempts       LoginAttempt[]
+  roomTypes           RoomType[]
+  rooms               Room[]
+  roomStatusLogs      RoomStatusLog[]
+  guests              Guest[]
+  groups              GroupReservation[]
+  bookings            Booking[]
+  housekeepingTasks   HousekeepingTask[]
+  maintenanceTickets  MaintenanceTicket[]
+  complaints          Complaint[]
+  invoices            Invoice[]
+  payments            Payment[]
+  receipts            Receipt[]
+  policies            Policy[]
+  roomCards           RoomCard[]
+  accessEvents        NfcAccessEvent[]
+  blueprints          Blueprint[]
+  paymentGateways     PaymentGateway[]
+  documents           Document[]
+  notifications       Notification[]
+  auditLogs           AuditLog[]
+  inventoryItems      InventoryItem[]
+  vendors             Vendor[]
+  handovers           ShiftHandover[]
+  nightAudits         NightAudit[]
+  integrations        Integration[]
+  ragDocuments        RagDocument[]
+  aiInteractions      AiInteraction[]
+  documentSequences   DocumentSequence[]
+  paymentRequests     PaymentRequest[]
+  webhookEvents       WebhookEvent[]
+  cashierShifts       CashierShift[]
+  cashMovements       CashMovement[]
+  creditNotes         CreditNote[]
+  reconciliations     ReconciliationRun[]
+  operationalTasks    OperationalTask[]
+  purchaseOrders      PurchaseOrder[]
+  inventoryMovements  InventoryMovement[]
+  incidents           Incident[]
+  lostFoundItems      LostFoundItem[]
+  documentTemplates   DocumentTemplate[]
+  communications      Communication[]
+  nfcDevices          NfcDevice[]
+  nfcCommands         NfcCommand[]
+  integrationSyncs    IntegrationSyncLog[]
+  reportSchedules     ReportSchedule[]
+  reportRuns          ReportRun[]
+  propertyAccess      PropertyAccess[]
+  outlets             Outlet[]
+  outletOrders        OutletOrder[]
+  eventBookings       EventBooking[]
+  serviceAppointments ServiceAppointment[]
+  transportRequests   TransportRequest[]
 }
 
 model DocumentSequence {
@@ -419,6 +460,7 @@ model User {
   passwordResetTokens PasswordResetToken[]
   auditLogs           AuditLog[]
   notifications       Notification[]
+  propertyAccess      PropertyAccess[]
 
   @@unique([hotelId, email])
   @@unique([hotelId, employeeCode])
@@ -442,6 +484,22 @@ model Session {
 
   @@index([userId, expiresAt])
   @@index([hotelId, revokedAt])
+}
+
+model PropertyAccess {
+  id        String   @id @default(cuid())
+  hotelId   String
+  userId    String
+  role      UserRole
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  hotel     Hotel    @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([hotelId, userId])
+  @@index([userId, active])
+  @@index([hotelId, role, active])
 }
 
 model StaffInvitation {
@@ -508,31 +566,32 @@ model RoomType {
 }
 
 model Room {
-  id                 String              @id @default(cuid())
-  hotelId            String
-  roomTypeId         String
-  roomNumber         String
-  floor              Int
-  status             RoomStatus          @default(AVAILABLE)
-  capacity           Int
-  guestName          String?
-  nextBookingAt      DateTime?
-  housekeepingNote   String?
-  notes              String?
-  outOfService       Boolean             @default(false)
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
-  hotel              Hotel               @relation(fields: [hotelId], references: [id], onDelete: Cascade)
-  roomType           RoomType            @relation(fields: [roomTypeId], references: [id], onDelete: Restrict)
-  bookings           Booking[]
-  housekeepingTasks  HousekeepingTask[]
-  maintenanceTickets MaintenanceTicket[]
-  complaints         Complaint[]
-  roomCards          RoomCard[]
-  zones              BlueprintZone[]
-  statusLogs         RoomStatusLog[]
-  incidents          Incident[]
-  lostFoundItems     LostFoundItem[]
+  id                  String               @id @default(cuid())
+  hotelId             String
+  roomTypeId          String
+  roomNumber          String
+  floor               Int
+  status              RoomStatus           @default(AVAILABLE)
+  capacity            Int
+  guestName           String?
+  nextBookingAt       DateTime?
+  housekeepingNote    String?
+  notes               String?
+  outOfService        Boolean              @default(false)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  hotel               Hotel                @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  roomType            RoomType             @relation(fields: [roomTypeId], references: [id], onDelete: Restrict)
+  bookings            Booking[]
+  housekeepingTasks   HousekeepingTask[]
+  maintenanceTickets  MaintenanceTicket[]
+  complaints          Complaint[]
+  roomCards           RoomCard[]
+  zones               BlueprintZone[]
+  statusLogs          RoomStatusLog[]
+  incidents           Incident[]
+  lostFoundItems      LostFoundItem[]
+  serviceAppointments ServiceAppointment[]
 
   @@unique([hotelId, roomNumber])
   @@index([hotelId, floor, status])
@@ -599,7 +658,7 @@ model GroupReservation {
 }
 
 model Booking {
-  id                 String            @id @default(cuid())
+  id                 String             @id @default(cuid())
   hotelId            String
   code               String
   guestId            String
@@ -607,15 +666,15 @@ model Booking {
   roomId             String?
   guestName          String
   roomTypeName       String
-  status             BookingStatus     @default(CONFIRMED)
+  status             BookingStatus      @default(CONFIRMED)
   source             String
   checkInAt          DateTime
   checkOutAt         DateTime
-  paymentStatus      PaymentState      @default(UNPAID)
-  advancePaid        Decimal           @default(0) @db.Decimal(12, 2)
-  depositRequired    Decimal           @default(0) @db.Decimal(12, 2)
-  totalAmount        Decimal           @db.Decimal(12, 2)
-  specialRequests    String            @default("")
+  paymentStatus      PaymentState       @default(UNPAID)
+  advancePaid        Decimal            @default(0) @db.Decimal(12, 2)
+  depositRequired    Decimal            @default(0) @db.Decimal(12, 2)
+  totalAmount        Decimal            @db.Decimal(12, 2)
+  specialRequests    String             @default("")
   companyName        String?
   actualCheckInAt    DateTime?
   actualCheckOutAt   DateTime?
@@ -623,14 +682,16 @@ model Booking {
   cancellationReason String?
   noShowAt           DateTime?
   createdByUserId    String?
-  createdAt          DateTime          @default(now())
-  updatedAt          DateTime          @updatedAt
-  hotel              Hotel             @relation(fields: [hotelId], references: [id], onDelete: Cascade)
-  guest              Guest             @relation(fields: [guestId], references: [id], onDelete: Restrict)
-  groupReservation   GroupReservation? @relation(fields: [groupReservationId], references: [id], onDelete: SetNull)
-  room               Room?             @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  hotel              Hotel              @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  guest              Guest              @relation(fields: [guestId], references: [id], onDelete: Restrict)
+  groupReservation   GroupReservation?  @relation(fields: [groupReservationId], references: [id], onDelete: SetNull)
+  room               Room?              @relation(fields: [roomId], references: [id], onDelete: SetNull)
   invoices           Invoice[]
   roomCards          RoomCard[]
+  outletOrders       OutletOrder[]
+  transportRequests  TransportRequest[]
 
   @@unique([hotelId, code])
   @@index([hotelId, status, checkInAt])
@@ -727,37 +788,39 @@ model Complaint {
 }
 
 model Invoice {
-  id              String           @id @default(cuid())
-  hotelId         String
-  bookingId       String?
-  guestId         String?
-  invoiceNumber   String
-  bookingCode     String
-  guestName       String
-  guestEmail      String?
-  roomNumber      String?
-  subtotal        Decimal          @db.Decimal(12, 2)
-  taxAmount       Decimal          @default(0) @db.Decimal(12, 2)
-  discountAmount  Decimal          @default(0) @db.Decimal(12, 2)
-  totalAmount     Decimal          @db.Decimal(12, 2)
-  paidAmount      Decimal          @default(0) @db.Decimal(12, 2)
-  balanceAmount   Decimal          @db.Decimal(12, 2)
-  status          InvoiceStatus    @default(UNPAID)
-  currency        String           @default("AED")
-  issuedAt        DateTime         @default(now())
-  dueAt           DateTime?
-  notes           String?
-  createdByUserId String?
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  hotel           Hotel            @relation(fields: [hotelId], references: [id], onDelete: Cascade)
-  booking         Booking?         @relation(fields: [bookingId], references: [id], onDelete: SetNull)
-  guest           Guest?           @relation(fields: [guestId], references: [id], onDelete: SetNull)
-  items           InvoiceItem[]
-  payments        Payment[]
-  receipts        Receipt[]
-  paymentRequests PaymentRequest[]
-  creditNotes     CreditNote[]
+  id                  String               @id @default(cuid())
+  hotelId             String
+  bookingId           String?
+  guestId             String?
+  invoiceNumber       String
+  bookingCode         String
+  guestName           String
+  guestEmail          String?
+  roomNumber          String?
+  subtotal            Decimal              @db.Decimal(12, 2)
+  taxAmount           Decimal              @default(0) @db.Decimal(12, 2)
+  discountAmount      Decimal              @default(0) @db.Decimal(12, 2)
+  totalAmount         Decimal              @db.Decimal(12, 2)
+  paidAmount          Decimal              @default(0) @db.Decimal(12, 2)
+  balanceAmount       Decimal              @db.Decimal(12, 2)
+  status              InvoiceStatus        @default(UNPAID)
+  currency            String               @default("AED")
+  issuedAt            DateTime             @default(now())
+  dueAt               DateTime?
+  notes               String?
+  createdByUserId     String?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  hotel               Hotel                @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  booking             Booking?             @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  guest               Guest?               @relation(fields: [guestId], references: [id], onDelete: SetNull)
+  items               InvoiceItem[]
+  payments            Payment[]
+  receipts            Receipt[]
+  paymentRequests     PaymentRequest[]
+  creditNotes         CreditNote[]
+  outletOrders        OutletOrder[]
+  serviceAppointments ServiceAppointment[]
 
   @@unique([hotelId, invoiceNumber])
   @@index([hotelId, status, issuedAt])
@@ -1403,6 +1466,144 @@ model LostFoundItem {
 
   @@unique([hotelId, itemCode])
   @@index([hotelId, status, foundAt])
+}
+
+model Outlet {
+  id        String        @id @default(cuid())
+  hotelId   String
+  name      String
+  type      String
+  location  String?
+  active    Boolean       @default(true)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  hotel     Hotel         @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  orders    OutletOrder[]
+
+  @@unique([hotelId, name])
+  @@index([hotelId, type, active])
+}
+
+model OutletOrder {
+  id          String            @id @default(cuid())
+  hotelId     String
+  outletId    String
+  bookingId   String?
+  invoiceId   String?
+  orderNumber String
+  guestName   String?
+  roomNumber  String?
+  status      OutletOrderStatus @default(OPEN)
+  totalAmount Decimal           @default(0) @db.Decimal(12, 2)
+  notes       String?
+  openedBy    String
+  postedAt    DateTime?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  hotel       Hotel             @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  outlet      Outlet            @relation(fields: [outletId], references: [id], onDelete: Restrict)
+  booking     Booking?          @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  invoice     Invoice?          @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  lines       OutletOrderLine[]
+
+  @@unique([hotelId, orderNumber])
+  @@index([hotelId, status, createdAt])
+  @@index([outletId, status, createdAt])
+}
+
+model OutletOrderLine {
+  id            String      @id @default(cuid())
+  outletOrderId String
+  label         String
+  quantity      Decimal     @default(1) @db.Decimal(10, 2)
+  unitAmount    Decimal     @db.Decimal(12, 2)
+  amount        Decimal     @db.Decimal(12, 2)
+  notes         String?
+  createdAt     DateTime    @default(now())
+  order         OutletOrder @relation(fields: [outletOrderId], references: [id], onDelete: Cascade)
+
+  @@index([outletOrderId])
+}
+
+model EventBooking {
+  id             String             @id @default(cuid())
+  hotelId        String
+  eventCode      String
+  eventName      String
+  contactName    String
+  contactEmail   String?
+  contactPhone   String?
+  venue          String
+  attendees      Int
+  startsAt       DateTime
+  endsAt         DateTime
+  status         EventBookingStatus @default(LEAD)
+  estimatedValue Decimal            @default(0) @db.Decimal(12, 2)
+  depositPaid    Decimal            @default(0) @db.Decimal(12, 2)
+  notes          String?
+  createdBy      String
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  hotel          Hotel              @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+
+  @@unique([hotelId, eventCode])
+  @@index([hotelId, status, startsAt])
+  @@index([hotelId, venue, startsAt, endsAt])
+}
+
+model ServiceAppointment {
+  id              String            @id @default(cuid())
+  hotelId         String
+  invoiceId       String?
+  roomId          String?
+  appointmentCode String
+  department      String
+  serviceName     String
+  guestName       String
+  guestContact    String?
+  staffName       String?
+  startsAt        DateTime
+  endsAt          DateTime
+  status          AppointmentStatus @default(BOOKED)
+  chargeAmount    Decimal           @default(0) @db.Decimal(12, 2)
+  notes           String?
+  createdBy       String
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  hotel           Hotel             @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  invoice         Invoice?          @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  room            Room?             @relation(fields: [roomId], references: [id], onDelete: SetNull)
+
+  @@unique([hotelId, appointmentCode])
+  @@index([hotelId, department, status, startsAt])
+  @@index([hotelId, staffName, startsAt, endsAt])
+}
+
+model TransportRequest {
+  id              String          @id @default(cuid())
+  hotelId         String
+  bookingId       String?
+  requestCode     String
+  guestName       String
+  guestContact    String?
+  pickupLocation  String
+  dropoffLocation String
+  pickupAt        DateTime
+  flightNumber    String?
+  vehicleType     String?
+  driverName      String?
+  driverContact   String?
+  status          TransportStatus @default(REQUESTED)
+  chargeAmount    Decimal         @default(0) @db.Decimal(12, 2)
+  notes           String?
+  createdBy       String
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  hotel           Hotel           @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  booking         Booking?        @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+
+  @@unique([hotelId, requestCode])
+  @@index([hotelId, status, pickupAt])
 }
 
 model ShiftHandover {

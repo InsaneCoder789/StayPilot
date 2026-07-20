@@ -62,6 +62,15 @@ export async function requireSession() {
   return session;
 }
 
+export async function requirePropertySession() {
+  const session = await requireSession();
+  const access = await getDb().propertyAccess.findUnique({
+    where: { hotelId_userId: { hotelId: session.hotelId, userId: session.userId } },
+  });
+  if (!access?.active) throw new Error("FORBIDDEN");
+  return { ...session, user: { ...session.user, role: access.role } };
+}
+
 export async function revokeSession() {
   const cookieStore = await cookies();
   const token = cookieStore.get(SESSION_COOKIE)?.value;

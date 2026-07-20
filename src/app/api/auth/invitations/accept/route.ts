@@ -20,6 +20,7 @@ export async function POST(request: Request) {
   }
   const user = await db.$transaction(async (tx) => {
     const row = await tx.user.create({ data: { hotelId: invitation.hotelId, name: invitation.name, email: invitation.email, passwordHash: await hashPassword(parsed.data.password), role: invitation.role, status: "ACTIVE", shiftLabel: "Unassigned", workload: "No active allocation" } });
+    await tx.propertyAccess.create({ data: { hotelId: invitation.hotelId, userId: row.id, role: invitation.role } });
     await tx.staffInvitation.update({ where: { id: invitation.id }, data: { acceptedAt: new Date() } });
     await tx.auditLog.create({ data: { hotelId: invitation.hotelId, userId: row.id, actorName: row.name, action: "ACCEPT_INVITATION", entityType: "User", entityId: row.id, target: row.email } });
     return row;

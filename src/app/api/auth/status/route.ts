@@ -6,6 +6,7 @@ import { getDb } from "@/lib/db";
 export async function GET() {
   const db = getDb();
   const [session, userCount] = await Promise.all([getSession(), db.user.count()]);
+  const access = session ? await db.propertyAccess.findUnique({ where: { hotelId_userId: { hotelId: session.hotelId, userId: session.userId } } }) : null;
   return NextResponse.json({
     hasUsers: userCount > 0,
     user: session
@@ -13,7 +14,7 @@ export async function GET() {
           id: session.user.id,
           name: session.user.name,
           email: session.user.email,
-          role: session.user.role,
+          role: access?.active ? access.role : session.user.role,
           active: session.user.status === "ACTIVE",
           status: session.user.status,
           mfaEnabled: session.user.mfaEnabled,

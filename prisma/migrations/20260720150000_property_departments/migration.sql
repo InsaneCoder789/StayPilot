@@ -1,0 +1,45 @@
+CREATE TYPE "OutletOrderStatus" AS ENUM ('OPEN', 'SENT', 'PREPARING', 'SERVED', 'POSTED', 'VOID');
+CREATE TYPE "EventBookingStatus" AS ENUM ('LEAD', 'TENTATIVE', 'CONFIRMED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED');
+CREATE TYPE "AppointmentStatus" AS ENUM ('BOOKED', 'CHECKED_IN', 'IN_SERVICE', 'COMPLETED', 'CANCELLED', 'NO_SHOW');
+CREATE TYPE "TransportStatus" AS ENUM ('REQUESTED', 'CONFIRMED', 'DISPATCHED', 'COMPLETED', 'CANCELLED');
+
+CREATE TABLE "PropertyAccess" ("id" TEXT NOT NULL, "hotelId" TEXT NOT NULL, "userId" TEXT NOT NULL, "role" "UserRole" NOT NULL, "active" BOOLEAN NOT NULL DEFAULT true, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "PropertyAccess_pkey" PRIMARY KEY ("id"));
+CREATE TABLE "Outlet" ("id" TEXT NOT NULL, "hotelId" TEXT NOT NULL, "name" TEXT NOT NULL, "type" TEXT NOT NULL, "location" TEXT, "active" BOOLEAN NOT NULL DEFAULT true, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "Outlet_pkey" PRIMARY KEY ("id"));
+CREATE TABLE "OutletOrder" ("id" TEXT NOT NULL, "hotelId" TEXT NOT NULL, "outletId" TEXT NOT NULL, "bookingId" TEXT, "invoiceId" TEXT, "orderNumber" TEXT NOT NULL, "guestName" TEXT, "roomNumber" TEXT, "status" "OutletOrderStatus" NOT NULL DEFAULT 'OPEN', "totalAmount" DECIMAL(12,2) NOT NULL DEFAULT 0, "notes" TEXT, "openedBy" TEXT NOT NULL, "postedAt" TIMESTAMP(3), "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "OutletOrder_pkey" PRIMARY KEY ("id"));
+CREATE TABLE "OutletOrderLine" ("id" TEXT NOT NULL, "outletOrderId" TEXT NOT NULL, "label" TEXT NOT NULL, "quantity" DECIMAL(10,2) NOT NULL DEFAULT 1, "unitAmount" DECIMAL(12,2) NOT NULL, "amount" DECIMAL(12,2) NOT NULL, "notes" TEXT, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "OutletOrderLine_pkey" PRIMARY KEY ("id"));
+CREATE TABLE "EventBooking" ("id" TEXT NOT NULL, "hotelId" TEXT NOT NULL, "eventCode" TEXT NOT NULL, "eventName" TEXT NOT NULL, "contactName" TEXT NOT NULL, "contactEmail" TEXT, "contactPhone" TEXT, "venue" TEXT NOT NULL, "attendees" INTEGER NOT NULL, "startsAt" TIMESTAMP(3) NOT NULL, "endsAt" TIMESTAMP(3) NOT NULL, "status" "EventBookingStatus" NOT NULL DEFAULT 'LEAD', "estimatedValue" DECIMAL(12,2) NOT NULL DEFAULT 0, "depositPaid" DECIMAL(12,2) NOT NULL DEFAULT 0, "notes" TEXT, "createdBy" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "EventBooking_pkey" PRIMARY KEY ("id"));
+CREATE TABLE "ServiceAppointment" ("id" TEXT NOT NULL, "hotelId" TEXT NOT NULL, "invoiceId" TEXT, "roomId" TEXT, "appointmentCode" TEXT NOT NULL, "department" TEXT NOT NULL, "serviceName" TEXT NOT NULL, "guestName" TEXT NOT NULL, "guestContact" TEXT, "staffName" TEXT, "startsAt" TIMESTAMP(3) NOT NULL, "endsAt" TIMESTAMP(3) NOT NULL, "status" "AppointmentStatus" NOT NULL DEFAULT 'BOOKED', "chargeAmount" DECIMAL(12,2) NOT NULL DEFAULT 0, "notes" TEXT, "createdBy" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "ServiceAppointment_pkey" PRIMARY KEY ("id"));
+CREATE TABLE "TransportRequest" ("id" TEXT NOT NULL, "hotelId" TEXT NOT NULL, "bookingId" TEXT, "requestCode" TEXT NOT NULL, "guestName" TEXT NOT NULL, "guestContact" TEXT, "pickupLocation" TEXT NOT NULL, "dropoffLocation" TEXT NOT NULL, "pickupAt" TIMESTAMP(3) NOT NULL, "flightNumber" TEXT, "vehicleType" TEXT, "driverName" TEXT, "driverContact" TEXT, "status" "TransportStatus" NOT NULL DEFAULT 'REQUESTED', "chargeAmount" DECIMAL(12,2) NOT NULL DEFAULT 0, "notes" TEXT, "createdBy" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "TransportRequest_pkey" PRIMARY KEY ("id"));
+
+CREATE INDEX "PropertyAccess_userId_active_idx" ON "PropertyAccess"("userId", "active");
+CREATE INDEX "PropertyAccess_hotelId_role_active_idx" ON "PropertyAccess"("hotelId", "role", "active");
+CREATE UNIQUE INDEX "PropertyAccess_hotelId_userId_key" ON "PropertyAccess"("hotelId", "userId");
+CREATE INDEX "Outlet_hotelId_type_active_idx" ON "Outlet"("hotelId", "type", "active");
+CREATE UNIQUE INDEX "Outlet_hotelId_name_key" ON "Outlet"("hotelId", "name");
+CREATE INDEX "OutletOrder_hotelId_status_createdAt_idx" ON "OutletOrder"("hotelId", "status", "createdAt");
+CREATE INDEX "OutletOrder_outletId_status_createdAt_idx" ON "OutletOrder"("outletId", "status", "createdAt");
+CREATE UNIQUE INDEX "OutletOrder_hotelId_orderNumber_key" ON "OutletOrder"("hotelId", "orderNumber");
+CREATE INDEX "OutletOrderLine_outletOrderId_idx" ON "OutletOrderLine"("outletOrderId");
+CREATE INDEX "EventBooking_hotelId_status_startsAt_idx" ON "EventBooking"("hotelId", "status", "startsAt");
+CREATE INDEX "EventBooking_hotelId_venue_startsAt_endsAt_idx" ON "EventBooking"("hotelId", "venue", "startsAt", "endsAt");
+CREATE UNIQUE INDEX "EventBooking_hotelId_eventCode_key" ON "EventBooking"("hotelId", "eventCode");
+CREATE INDEX "ServiceAppointment_hotelId_department_status_startsAt_idx" ON "ServiceAppointment"("hotelId", "department", "status", "startsAt");
+CREATE INDEX "ServiceAppointment_hotelId_staffName_startsAt_endsAt_idx" ON "ServiceAppointment"("hotelId", "staffName", "startsAt", "endsAt");
+CREATE UNIQUE INDEX "ServiceAppointment_hotelId_appointmentCode_key" ON "ServiceAppointment"("hotelId", "appointmentCode");
+CREATE INDEX "TransportRequest_hotelId_status_pickupAt_idx" ON "TransportRequest"("hotelId", "status", "pickupAt");
+CREATE UNIQUE INDEX "TransportRequest_hotelId_requestCode_key" ON "TransportRequest"("hotelId", "requestCode");
+
+ALTER TABLE "PropertyAccess" ADD CONSTRAINT "PropertyAccess_hotelId_fkey" FOREIGN KEY ("hotelId") REFERENCES "Hotel"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "PropertyAccess" ADD CONSTRAINT "PropertyAccess_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Outlet" ADD CONSTRAINT "Outlet_hotelId_fkey" FOREIGN KEY ("hotelId") REFERENCES "Hotel"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "OutletOrder" ADD CONSTRAINT "OutletOrder_hotelId_fkey" FOREIGN KEY ("hotelId") REFERENCES "Hotel"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "OutletOrder" ADD CONSTRAINT "OutletOrder_outletId_fkey" FOREIGN KEY ("outletId") REFERENCES "Outlet"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "OutletOrder" ADD CONSTRAINT "OutletOrder_bookingId_fkey" FOREIGN KEY ("bookingId") REFERENCES "Booking"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "OutletOrder" ADD CONSTRAINT "OutletOrder_invoiceId_fkey" FOREIGN KEY ("invoiceId") REFERENCES "Invoice"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "OutletOrderLine" ADD CONSTRAINT "OutletOrderLine_outletOrderId_fkey" FOREIGN KEY ("outletOrderId") REFERENCES "OutletOrder"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "EventBooking" ADD CONSTRAINT "EventBooking_hotelId_fkey" FOREIGN KEY ("hotelId") REFERENCES "Hotel"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "ServiceAppointment" ADD CONSTRAINT "ServiceAppointment_hotelId_fkey" FOREIGN KEY ("hotelId") REFERENCES "Hotel"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "ServiceAppointment" ADD CONSTRAINT "ServiceAppointment_invoiceId_fkey" FOREIGN KEY ("invoiceId") REFERENCES "Invoice"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "ServiceAppointment" ADD CONSTRAINT "ServiceAppointment_roomId_fkey" FOREIGN KEY ("roomId") REFERENCES "Room"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "TransportRequest" ADD CONSTRAINT "TransportRequest_hotelId_fkey" FOREIGN KEY ("hotelId") REFERENCES "Hotel"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "TransportRequest" ADD CONSTRAINT "TransportRequest_bookingId_fkey" FOREIGN KEY ("bookingId") REFERENCES "Booking"("id") ON DELETE SET NULL ON UPDATE CASCADE;

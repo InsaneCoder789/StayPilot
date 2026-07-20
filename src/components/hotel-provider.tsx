@@ -36,12 +36,15 @@ type HandoverInput = Omit<ShiftHandoverRecord, "id" | "createdAt">;
 type InvoiceInput = { guestName: string; guestEmail?: string; bookingCode?: string; roomNumber?: string; dueDate?: string; notes?: string; lineItems: Array<{ label: string; amount: number }> };
 type BlueprintZoneInput = { blueprintId: string; label: string; type: BlueprintRecord["zones"][number]["type"]; linkedRoomNumber?: string };
 type PolicyAnswer = { answer: string; sources: string[] };
+type PropertySummary = { id: string; name: string; propertyCode: string; location: string; role: StaffRole };
 
 type HotelContextType = {
   state: HotelSnapshot;
   currentUser: AuthUserRecord | null;
   hydrated: boolean;
   hasUsers: boolean;
+  properties: PropertySummary[];
+  currentPropertyId: string;
   refresh: () => Promise<void>;
   login: (email: string, password: string, otp?: string) => Promise<CommandResult>;
   logout: () => Promise<void>;
@@ -57,6 +60,8 @@ type HotelContextType = {
   setUserStatus: (userId: string, status: "ACTIVE" | "DISABLED") => Promise<CommandResult>;
   revokeUserSessions: (userId: string) => Promise<CommandResult>;
   resetHotelData: () => Promise<CommandResult>;
+  createProperty: (input: { name: string; propertyCode: string; city: string; country: string; currency: string; floors: number; roomsPerFloor: number }) => Promise<CommandResult>;
+  switchProperty: (propertyId: string) => Promise<CommandResult>;
   setRoomStatus: (roomId: string, status: RoomStatus) => Promise<CommandResult>;
   createBooking: (input: BookingInput) => Promise<CommandResult>;
   assignBookingRoom: (bookingId: string, roomNumber: string) => Promise<CommandResult>;
@@ -107,6 +112,15 @@ type HotelContextType = {
   createPurchaseOrder: (vendorId: string, lines: Array<{ inventoryItemId: string; quantity: number; unitCost: number }>, notes?: string) => Promise<CommandResult>;
   updatePurchaseOrderStatus: (purchaseOrderId: string, status: "SUBMITTED" | "APPROVED" | "ORDERED" | "CANCELLED") => Promise<CommandResult>;
   receivePurchaseOrder: (purchaseOrderId: string, receipts: Array<{ lineId: string; quantity: number }>) => Promise<CommandResult>;
+  createOutlet: (input: { name: string; type: string; location?: string }) => Promise<CommandResult>;
+  createOutletOrder: (input: { outletId: string; invoiceId?: string; guestName?: string; roomNumber?: string; notes?: string; lines: Array<{ label: string; quantity: number; unitAmount: number }> }) => Promise<CommandResult>;
+  updateOutletOrderStatus: (orderId: string, status: "PREPARING" | "SERVED" | "POSTED" | "VOID") => Promise<CommandResult>;
+  createEventBooking: (input: { eventName: string; contactName: string; contactEmail?: string; contactPhone?: string; venue: string; attendees: number; startsAt: string; endsAt: string; estimatedValue: number; notes?: string }) => Promise<CommandResult>;
+  updateEventBookingStatus: (eventId: string, status: "TENTATIVE" | "CONFIRMED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED") => Promise<CommandResult>;
+  createServiceAppointment: (input: { department: string; serviceName: string; guestName: string; guestContact?: string; roomNumber?: string; invoiceId?: string; staffName?: string; startsAt: string; endsAt: string; chargeAmount: number; notes?: string }) => Promise<CommandResult>;
+  updateServiceAppointmentStatus: (appointmentId: string, status: "CHECKED_IN" | "IN_SERVICE" | "COMPLETED" | "CANCELLED" | "NO_SHOW") => Promise<CommandResult>;
+  createTransportRequest: (input: { guestName: string; guestContact?: string; pickupLocation: string; dropoffLocation: string; pickupAt: string; flightNumber?: string; vehicleType?: string; chargeAmount: number; notes?: string }) => Promise<CommandResult>;
+  updateTransportRequestStatus: (requestId: string, status: "CONFIRMED" | "DISPATCHED" | "COMPLETED" | "CANCELLED", driverName?: string, driverContact?: string) => Promise<CommandResult>;
   addVendor: (input: VendorInput) => Promise<CommandResult>;
   addNotification: (input: NotificationInput) => Promise<CommandResult>;
   markNotificationRead: (notificationId: string) => Promise<CommandResult>;
@@ -123,7 +137,7 @@ export function roleAllows(role: StaffRole, area: string) {
   const matrix: Record<StaffRole, string[]> = {
     HOTEL_ADMIN: ["*"],
     MANAGER: ["*"],
-    RECEPTIONIST: ["dashboard", "front-desk", "rooms", "bookings", "guests", "billing", "payments", "complaints", "documents", "room-cards", "access", "service-ops", "blueprints"],
+    RECEPTIONIST: ["dashboard", "front-desk", "rooms", "bookings", "guests", "billing", "payments", "complaints", "documents", "room-cards", "access", "service-ops", "blueprints", "departments"],
     HOUSEKEEPING: ["dashboard", "rooms", "housekeeping", "service-ops"],
     MAINTENANCE: ["dashboard", "maintenance", "rooms", "service-ops", "documents"],
     ACCOUNTANT: ["dashboard", "billing", "payments", "reports", "documents", "procurement", "settings"],
@@ -142,14 +156,18 @@ export function HotelProvider({ children }: { children: ReactNode }) {
   const [currentUser, setCurrentUser] = useState<AuthUserRecord | null>(null);
   const [hasUsers, setHasUsers] = useState(false);
   const [hydrated, setHydrated] = useState(false);
+  const [properties, setProperties] = useState<PropertySummary[]>([]);
+  const [currentPropertyId, setCurrentPropertyId] = useState("");
 
   async function refresh() {
     const status = await jsonRequest<{ hasUsers: boolean; user: AuthUserRecord | null }>("/api/auth/status");
     setHasUsers(status.hasUsers);
     setCurrentUser(status.user);
     if (status.user) {
-      const snapshot = await jsonRequest<{ state: HotelSnapshot }>("/api/hotel/state");
+      const [snapshot, propertyResponse] = await Promise.all([jsonRequest<{ state: HotelSnapshot }>("/api/hotel/state"), jsonRequest<{ properties: PropertySummary[]; currentHotelId: string }>("/api/properties")]);
       setState(snapshot.state);
+      setProperties(propertyResponse.properties);
+      setCurrentPropertyId(propertyResponse.currentHotelId);
     }
   }
 
@@ -162,8 +180,8 @@ export function HotelProvider({ children }: { children: ReactNode }) {
         setHasUsers(status.hasUsers);
         setCurrentUser(status.user);
         if (status.user) {
-          const snapshot = await jsonRequest<{ state: HotelSnapshot }>("/api/hotel/state");
-          if (active) setState(snapshot.state);
+          const [snapshot, propertyResponse] = await Promise.all([jsonRequest<{ state: HotelSnapshot }>("/api/hotel/state"), jsonRequest<{ properties: PropertySummary[]; currentHotelId: string }>("/api/properties")]);
+          if (active) { setState(snapshot.state); setProperties(propertyResponse.properties); setCurrentPropertyId(propertyResponse.currentHotelId); }
         }
       } finally {
         if (active) setHydrated(true);
@@ -190,9 +208,9 @@ export function HotelProvider({ children }: { children: ReactNode }) {
   }
 
   const value: HotelContextType = {
-    state, currentUser, hydrated, hasUsers, refresh,
+    state, currentUser, hydrated, hasUsers, properties, currentPropertyId, refresh,
     async login(email, password, otp) { const result = await jsonRequest<CommandResult>("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password, otp: otp || undefined }) }); if (result.ok) await refresh(); return result; },
-    async logout() { await jsonRequest("/api/auth/logout", { method: "POST" }); setCurrentUser(null); setState(initialHotelSnapshot); },
+    async logout() { await jsonRequest("/api/auth/logout", { method: "POST" }); setCurrentUser(null); setState(initialHotelSnapshot); setProperties([]); setCurrentPropertyId(""); },
     async bootstrapOwner(input) { const result = await jsonRequest<CommandResult>("/api/auth/bootstrap", { method: "POST", body: JSON.stringify(input) }); if (result.ok) await refresh(); return result; },
     requestPasswordReset: (email) => jsonRequest("/api/auth/password/request", { method: "POST", body: JSON.stringify({ email }) }),
     resetPassword: (token, password) => jsonRequest("/api/auth/password/reset", { method: "POST", body: JSON.stringify({ token, password }) }),
@@ -205,6 +223,8 @@ export function HotelProvider({ children }: { children: ReactNode }) {
     setUserStatus: (userId, status) => command("setUserStatus", { userId, status }),
     revokeUserSessions: (userId) => command("revokeUserSessions", { userId }),
     resetHotelData: () => command("resetHotelData"),
+    async createProperty(input) { const result = await jsonRequest<CommandResult>("/api/properties", { method: "POST", body: JSON.stringify(input) }); if (result.ok) await refresh(); return result; },
+    async switchProperty(propertyId) { const result = await jsonRequest<CommandResult>("/api/properties/switch", { method: "POST", body: JSON.stringify({ propertyId }) }); if (result.ok) await refresh(); return result; },
     setRoomStatus: (roomId, status) => command("setRoomStatus", { roomId, status }),
     createBooking: (input) => command("createBooking", input),
     assignBookingRoom: (bookingId, roomNumber) => command("assignBookingRoom", { bookingId, roomNumber }),
@@ -269,6 +289,15 @@ export function HotelProvider({ children }: { children: ReactNode }) {
     createPurchaseOrder: (vendorId, lines, notes) => command("createPurchaseOrder", { vendorId, lines, notes }),
     updatePurchaseOrderStatus: (purchaseOrderId, status) => command("updatePurchaseOrderStatus", { purchaseOrderId, status }),
     receivePurchaseOrder: (purchaseOrderId, receipts) => command("receivePurchaseOrder", { purchaseOrderId, receipts }),
+    createOutlet: (input) => command("createOutlet", input),
+    createOutletOrder: (input) => command("createOutletOrder", input),
+    updateOutletOrderStatus: (orderId, status) => command("updateOutletOrderStatus", { orderId, status }),
+    createEventBooking: (input) => command("createEventBooking", input),
+    updateEventBookingStatus: (eventId, status) => command("updateEventBookingStatus", { eventId, status }),
+    createServiceAppointment: (input) => command("createServiceAppointment", input),
+    updateServiceAppointmentStatus: (appointmentId, status) => command("updateServiceAppointmentStatus", { appointmentId, status }),
+    createTransportRequest: (input) => command("createTransportRequest", input),
+    updateTransportRequestStatus: (requestId, status, driverName, driverContact) => command("updateTransportRequestStatus", { requestId, status, driverName, driverContact }),
     addVendor: (input) => command("addVendor", input),
     addNotification: (input) => command("addNotification", input),
     markNotificationRead: (notificationId) => command("markNotificationRead", { notificationId }),

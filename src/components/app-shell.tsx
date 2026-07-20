@@ -63,6 +63,7 @@ const navigation: Array<{ label: string; items: NavItem[] }> = [
       { href: "/housekeeping", label: "Housekeeping", area: "housekeeping", icon: "sparkle", keywords: "clean dirty inspect" },
       { href: "/maintenance", label: "Engineering", area: "maintenance", icon: "wrench", keywords: "repair work order" },
       { href: "/inventory", label: "Inventory", area: "service-ops", icon: "box", keywords: "stock supplies" },
+      { href: "/departments", label: "Hotel departments", area: "departments", icon: "grid", keywords: "restaurant room service spa events transport concierge" },
       { href: "/procurement", label: "Procurement", area: "procurement", icon: "box", keywords: "purchase order receiving vendor" },
       { href: "/vendors", label: "Vendors", area: "service-ops", icon: "handover" },
       { href: "/blueprints", label: "Blueprints", area: "blueprints", icon: "blueprint", keywords: "floor plan zones" },
@@ -107,7 +108,7 @@ const NAV_SCROLL_KEY = "staypilot-nav-scroll";
 
 export function AppShell({ activeHref, eyebrow, title, description, children }: AppShellProps) {
   const router = useRouter();
-  const { currentUser, state, logout } = useHotel();
+  const { currentUser, state, logout, properties, currentPropertyId, switchProperty } = useHotel();
   const navRef = useRef<HTMLDivElement | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
@@ -176,6 +177,22 @@ export function AppShell({ activeHref, eyebrow, title, description, children }: 
           <span>Search workspaces</span>
           <kbd className="ml-auto rounded border border-sidebar-border bg-background/60 px-1.5 py-0.5 font-mono text-[10px]">⌘K</kbd>
         </button>
+        {properties.length > 0 ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button type="button" className="mt-2 flex h-12 w-full items-center gap-3 rounded-lg border border-sidebar-border bg-sidebar-accent/35 px-3 text-left transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <span className="grid size-7 shrink-0 place-items-center rounded-md bg-primary/12 font-mono text-[10px] font-bold text-primary">{properties.find((item) => item.id === currentPropertyId)?.propertyCode.slice(0, 3) ?? "HTL"}</span>
+                <span className="min-w-0"><span className="block truncate text-xs font-semibold text-foreground">{properties.find((item) => item.id === currentPropertyId)?.name ?? state.hotel.hotelName}</span><span className="block truncate text-[10px] text-muted-foreground">Active property</span></span>
+                <ChevronDown className="ml-auto size-4 shrink-0 text-muted-foreground" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-[246px]">
+              <DropdownMenuLabel>Switch property</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {properties.map((property) => <DropdownMenuItem key={property.id} onSelect={() => { if (property.id !== currentPropertyId) void switchProperty(property.id); }}><span className="min-w-0"><span className="block truncate">{property.name}</span><span className="block truncate text-[10px] text-muted-foreground">{property.propertyCode} · {property.location}</span></span>{property.id === currentPropertyId ? <span className="ml-auto text-primary">Active</span> : null}</DropdownMenuItem>)}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
       </div>
 
       <ScrollArea ref={mobile ? undefined : navRef} className="min-h-0 flex-1 px-3">
@@ -314,7 +331,7 @@ export function AppShell({ activeHref, eyebrow, title, description, children }: 
             <div className="flex shrink-0 items-center gap-2 rounded-lg border border-border bg-card/50 px-3 py-2 text-xs text-muted-foreground">
               <span className="size-1.5 rounded-full bg-primary" />
               <strong className="font-medium text-foreground">Live</strong>
-              <span>{state.rooms.length} rooms · 20 floors</span>
+              <span>{state.rooms.length} rooms · {new Set(state.rooms.map((room) => room.floor)).size} floors</span>
             </div>
           </div>
           {children}

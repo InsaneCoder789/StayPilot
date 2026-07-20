@@ -147,6 +147,10 @@ async function main() {
     });
   }
 
+  for (const [name, type, location] of [["All Day Dining", "RESTAURANT", "Lobby"], ["Room Service", "ROOM_SERVICE", "In-room"], ["Lobby Lounge", "BAR", "Lobby"]] as const) {
+    await prisma.outlet.upsert({ where: { hotelId_name: { hotelId: hotel.id, name } }, update: { type, location, active: true }, create: { hotelId: hotel.id, name, type, location } });
+  }
+
   const vendor = await prisma.vendor.upsert({
     where: { hotelId_name: { hotelId: hotel.id, name: "BlueWave Linen Supply" } },
     update: {},

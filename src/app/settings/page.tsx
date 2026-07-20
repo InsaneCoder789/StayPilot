@@ -21,6 +21,10 @@ export default function SettingsPage() {
     enableMfa,
     disableMfa,
     logout,
+    properties,
+    currentPropertyId,
+    createProperty,
+    switchProperty,
   } = useHotel();
   const [hotel, setHotel] = useState(state.hotel);
   const [policy, setPolicy] = useState({
@@ -39,6 +43,8 @@ export default function SettingsPage() {
   const [mfaCode, setMfaCode] = useState("");
   const [securityPassword, setSecurityPassword] = useState("");
   const [securityMessage, setSecurityMessage] = useState("");
+  const [propertyMessage, setPropertyMessage] = useState("");
+  const [propertyForm, setPropertyForm] = useState({ name: "", propertyCode: "", city: "", country: "", currency: "AED", floors: 20, roomsPerFloor: 5 });
 
   return (
     <AppShell
@@ -47,6 +53,20 @@ export default function SettingsPage() {
       title="Hotel profile and policies"
       description="Manage property defaults, tax settings, and the operational policy base used across the system."
     >
+      <section className="suite-card mb-6 p-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><span className="suite-eyebrow">Portfolio</span><h2 className="mt-3 text-2xl font-semibold">Property control</h2><p className="mt-2 text-sm text-muted-foreground">Switch hotels without leaving the operating suite, or provision a complete property with floors, rooms, blueprints, outlets, payments, and integrations.</p></div><p className="font-mono text-xs text-primary">{properties.length} accessible {properties.length === 1 ? "property" : "properties"}</p></div>
+        <div className="mt-5 grid gap-3 xl:grid-cols-[1fr_1fr_1fr_1fr_110px_130px_auto]">
+          <input className="suite-input" placeholder="Property name" value={propertyForm.name} onChange={(event) => setPropertyForm((current) => ({ ...current, name: event.target.value }))} />
+          <input className="suite-input" placeholder="Unique code" value={propertyForm.propertyCode} onChange={(event) => setPropertyForm((current) => ({ ...current, propertyCode: event.target.value.toUpperCase() }))} />
+          <input className="suite-input" placeholder="City" value={propertyForm.city} onChange={(event) => setPropertyForm((current) => ({ ...current, city: event.target.value }))} />
+          <input className="suite-input" placeholder="Country" value={propertyForm.country} onChange={(event) => setPropertyForm((current) => ({ ...current, country: event.target.value }))} />
+          <input className="suite-input" placeholder="Currency" maxLength={3} value={propertyForm.currency} onChange={(event) => setPropertyForm((current) => ({ ...current, currency: event.target.value.toUpperCase() }))} />
+          <CustomSelect value={String(propertyForm.roomsPerFloor)} onChange={(value) => setPropertyForm((current) => ({ ...current, roomsPerFloor: Number(value) }))} options={[4, 5, 6].map((value) => ({ value: String(value), label: `${value} rooms/floor` }))} />
+          <button className="suite-button suite-button-primary" onClick={async () => { const result = await createProperty(propertyForm); setPropertyMessage(result.message); if (result.ok) setPropertyForm((current) => ({ ...current, name: "", propertyCode: "", city: "", country: "" })); }}>Create property</button>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2">{properties.map((property) => <button key={property.id} type="button" onClick={() => property.id !== currentPropertyId && switchProperty(property.id)} className={property.id === currentPropertyId ? "suite-button suite-button-primary" : "suite-button suite-button-secondary"}>{property.name} · {property.propertyCode}</button>)}</div>
+        {propertyMessage ? <p className="mt-3 text-sm text-muted-foreground">{propertyMessage}</p> : null}
+      </section>
       <div className="grid gap-4 2xl:grid-cols-[0.95fr_1.05fr]">
         <section className="suite-card p-6">
           <h3 className="text-2xl font-semibold tracking-[-0.03em]">

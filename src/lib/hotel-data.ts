@@ -497,6 +497,29 @@ export type IntegrationSyncRecord = {
   createdAt: string;
 };
 
+export type OutletRecord = { id: string; name: string; type: string; location?: string; active: boolean };
+export type OutletOrderRecord = {
+  id: string; outletId: string; outletName: string; orderNumber: string; guestName?: string; roomNumber?: string;
+  invoiceId?: string; status: "OPEN" | "SENT" | "PREPARING" | "SERVED" | "POSTED" | "VOID"; totalAmount: number;
+  notes?: string; openedBy: string; createdAt: string;
+  lines: Array<{ id: string; label: string; quantity: number; unitAmount: number; amount: number }>;
+};
+export type EventBookingRecord = {
+  id: string; eventCode: string; eventName: string; contactName: string; contactEmail?: string; contactPhone?: string;
+  venue: string; attendees: number; startsAt: string; endsAt: string; status: "LEAD" | "TENTATIVE" | "CONFIRMED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED";
+  estimatedValue: number; depositPaid: number; notes?: string;
+};
+export type ServiceAppointmentRecord = {
+  id: string; appointmentCode: string; department: string; serviceName: string; guestName: string; guestContact?: string;
+  roomNumber?: string; invoiceId?: string; staffName?: string; startsAt: string; endsAt: string;
+  status: "BOOKED" | "CHECKED_IN" | "IN_SERVICE" | "COMPLETED" | "CANCELLED" | "NO_SHOW"; chargeAmount: number; notes?: string;
+};
+export type TransportRequestRecord = {
+  id: string; requestCode: string; guestName: string; guestContact?: string; pickupLocation: string; dropoffLocation: string;
+  pickupAt: string; flightNumber?: string; vehicleType?: string; driverName?: string; driverContact?: string;
+  status: "REQUESTED" | "CONFIRMED" | "DISPATCHED" | "COMPLETED" | "CANCELLED"; chargeAmount: number; notes?: string;
+};
+
 export type HotelDetails = {
   hotelName: string;
   location: string;
@@ -550,6 +573,11 @@ export type HotelSnapshot = {
   integrations: IntegrationRecord[];
   nfcDevices: NfcDeviceRecord[];
   integrationSyncs: IntegrationSyncRecord[];
+  outlets: OutletRecord[];
+  outletOrders: OutletOrderRecord[];
+  eventBookings: EventBookingRecord[];
+  serviceAppointments: ServiceAppointmentRecord[];
+  transportRequests: TransportRequestRecord[];
 };
 
 const roomTypes = [
@@ -741,6 +769,11 @@ export const initialHotelSnapshot: HotelSnapshot = {
   ],
   nfcDevices: [],
   integrationSyncs: [],
+  outlets: [],
+  outletOrders: [],
+  eventBookings: [],
+  serviceAppointments: [],
+  transportRequests: [],
 };
 
 export function getRoomStatusCounts(rooms: RoomRecord[]) {

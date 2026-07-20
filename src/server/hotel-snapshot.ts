@@ -25,6 +25,7 @@ export async function getHotelSnapshot(hotelId: string): Promise<HotelSnapshot> 
     where: { id: hotelId },
     include: {
       users: { orderBy: { createdAt: "desc" } },
+      propertyAccess: { where: { active: true }, include: { user: true }, orderBy: { createdAt: "desc" } },
       rooms: { include: { roomType: true }, orderBy: [{ floor: "asc" }, { roomNumber: "asc" }] },
       guests: { orderBy: { updatedAt: "desc" } },
       bookings: { orderBy: { createdAt: "desc" } },
@@ -62,6 +63,11 @@ export async function getHotelSnapshot(hotelId: string): Promise<HotelSnapshot> 
       integrations: { orderBy: { createdAt: "asc" } },
       nfcDevices: { include: { _count: { select: { commands: { where: { status: { in: ["QUEUED", "CLAIMED"] } } } } } }, orderBy: { createdAt: "asc" } },
       integrationSyncs: { orderBy: { createdAt: "desc" }, take: 500 },
+      outlets: { orderBy: { name: "asc" } },
+      outletOrders: { include: { outlet: true, lines: true }, orderBy: { createdAt: "desc" }, take: 500 },
+      eventBookings: { orderBy: { startsAt: "asc" }, take: 500 },
+      serviceAppointments: { include: { room: true }, orderBy: { startsAt: "asc" }, take: 500 },
+      transportRequests: { orderBy: { pickupAt: "asc" }, take: 500 },
     },
   });
   if (!hotel) throw new Error("HOTEL_NOT_FOUND");
@@ -255,8 +261,8 @@ export async function getHotelSnapshot(hotelId: string): Promise<HotelSnapshot> 
       issuedAt: stamp(receipt.issuedAt),
     })),
     policies: hotel.policies.map((policy) => ({ id: policy.id, title: policy.title, category: policy.category, content: policy.content })),
-    staff: hotel.users.map((user) => ({ id: user.id, name: user.name, role: user.role, shift: user.shiftLabel ?? "Unassigned", load: user.workload ?? "No active allocation" })),
-    users: hotel.users.map((user) => ({ id: user.id, name: user.name, email: user.email, role: user.role, active: user.status === "ACTIVE", status: user.status, mfaEnabled: user.mfaEnabled })),
+    staff: hotel.propertyAccess.map((access) => ({ id: access.user.id, name: access.user.name, role: access.role, shift: access.user.shiftLabel ?? "Unassigned", load: access.user.workload ?? "No active allocation" })),
+    users: hotel.propertyAccess.map((access) => ({ id: access.user.id, name: access.user.name, email: access.user.email, role: access.role, active: access.user.status === "ACTIVE", status: access.user.status, mfaEnabled: access.user.mfaEnabled })),
     roomCards: hotel.roomCards.map((card) => ({ id: card.id, roomNumber: card.room.roomNumber, guestName: card.guestName ?? undefined, status: card.status, accessType: card.accessType, issuedAt: card.issuedAt ? stamp(card.issuedAt) : undefined })),
     nfcEvents: hotel.accessEvents.map((event) => ({ id: event.id, cardId: event.cardId, roomNumber: event.card.room.roomNumber, guestName: event.card.guestName ?? undefined, event: event.event, location: event.location, occurredAt: stamp(event.occurredAt) })),
     blueprints: hotel.blueprints.map((blueprint) => ({ id: blueprint.id, name: blueprint.name, floor: blueprint.floor, updatedAt: stamp(blueprint.updatedAt), zones: blueprint.zones.map((zone) => ({ id: zone.id, label: zone.label, type: zone.type, linkedRoomNumber: zone.room?.roomNumber })) })),
@@ -279,5 +285,10 @@ export async function getHotelSnapshot(hotelId: string): Promise<HotelSnapshot> 
     integrations: hotel.integrations.map((integration) => ({ id: integration.id, name: integration.name, type: integration.type, enabled: integration.enabled, status: integration.status })),
     nfcDevices: hotel.nfcDevices.map((device) => ({ id: device.id, name: device.name, deviceCode: device.deviceCode, location: device.location, provider: device.provider, status: device.lastHeartbeat && device.lastHeartbeat > new Date(Date.now() - 120_000) ? device.status : "OFFLINE", firmware: device.firmware ?? undefined, lastHeartbeat: device.lastHeartbeat ? stamp(device.lastHeartbeat) : undefined, pendingCommands: device._count.commands })),
     integrationSyncs: hotel.integrationSyncs.map((sync) => ({ id: sync.id, provider: sync.provider, operation: sync.operation, direction: sync.direction, externalId: sync.externalId, status: sync.status, error: sync.error ?? undefined, processedAt: sync.processedAt ? stamp(sync.processedAt) : undefined, createdAt: stamp(sync.createdAt) })),
+    outlets: hotel.outlets.map((outlet) => ({ id: outlet.id, name: outlet.name, type: outlet.type, location: outlet.location ?? undefined, active: outlet.active })),
+    outletOrders: hotel.outletOrders.map((order) => ({ id: order.id, outletId: order.outletId, outletName: order.outlet.name, orderNumber: order.orderNumber, guestName: order.guestName ?? undefined, roomNumber: order.roomNumber ?? undefined, invoiceId: order.invoiceId ?? undefined, status: order.status, totalAmount: Number(order.totalAmount), notes: order.notes ?? undefined, openedBy: order.openedBy, createdAt: stamp(order.createdAt), lines: order.lines.map((line) => ({ id: line.id, label: line.label, quantity: Number(line.quantity), unitAmount: Number(line.unitAmount), amount: Number(line.amount) })) })),
+    eventBookings: hotel.eventBookings.map((event) => ({ id: event.id, eventCode: event.eventCode, eventName: event.eventName, contactName: event.contactName, contactEmail: event.contactEmail ?? undefined, contactPhone: event.contactPhone ?? undefined, venue: event.venue, attendees: event.attendees, startsAt: stamp(event.startsAt), endsAt: stamp(event.endsAt), status: event.status, estimatedValue: Number(event.estimatedValue), depositPaid: Number(event.depositPaid), notes: event.notes ?? undefined })),
+    serviceAppointments: hotel.serviceAppointments.map((appointment) => ({ id: appointment.id, appointmentCode: appointment.appointmentCode, department: appointment.department, serviceName: appointment.serviceName, guestName: appointment.guestName, guestContact: appointment.guestContact ?? undefined, roomNumber: appointment.room?.roomNumber, invoiceId: appointment.invoiceId ?? undefined, staffName: appointment.staffName ?? undefined, startsAt: stamp(appointment.startsAt), endsAt: stamp(appointment.endsAt), status: appointment.status, chargeAmount: Number(appointment.chargeAmount), notes: appointment.notes ?? undefined })),
+    transportRequests: hotel.transportRequests.map((request) => ({ id: request.id, requestCode: request.requestCode, guestName: request.guestName, guestContact: request.guestContact ?? undefined, pickupLocation: request.pickupLocation, dropoffLocation: request.dropoffLocation, pickupAt: stamp(request.pickupAt), flightNumber: request.flightNumber ?? undefined, vehicleType: request.vehicleType ?? undefined, driverName: request.driverName ?? undefined, driverContact: request.driverContact ?? undefined, status: request.status, chargeAmount: Number(request.chargeAmount), notes: request.notes ?? undefined })),
   };
 }
