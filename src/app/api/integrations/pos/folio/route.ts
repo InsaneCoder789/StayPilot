@@ -10,9 +10,12 @@ const schema = z.object({ hotelId: z.string().min(1), externalId: z.string().min
 export async function POST(request: Request) {
   const rawBody = await request.text();
   if (!verifySharedSignature(rawBody, request.headers.get("x-staypilot-signature"), process.env.POS_WEBHOOK_SECRET)) return NextResponse.json({ ok: false }, { status: 401 });
-  const parsed = schema.safeParse(JSON.parse(rawBody));
+  let payload: unknown;
+  try { payload = JSON.parse(rawBody); } catch { return NextResponse.json({ ok: false, message: "Invalid JSON payload." }, { status: 400 }); }
+  const parsed = schema.safeParse(payload);
   if (!parsed.success) return NextResponse.json({ ok: false }, { status: 400 });
   const db = getDb();
+  if (!await db.hotel.findUnique({ where: { id: parsed.data.hotelId }, select: { id: true } })) return NextResponse.json({ ok: false }, { status: 404 });
   const provider = (request.headers.get("x-staypilot-provider") || "POS").toUpperCase().slice(0, 60);
   const duplicate = await db.integrationSyncLog.findUnique({ where: { provider_operation_externalId: { provider, operation: "FOLIO_POST", externalId: parsed.data.externalId } } });
   if (duplicate) return NextResponse.json({ ok: true, duplicate: true });

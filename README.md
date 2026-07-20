@@ -25,7 +25,7 @@
 
 ## What Is StayPilot?
 
-StayPilot is a private hotel operations workspace that brings the front desk, reservations, guests, rooms, housekeeping, engineering, service recovery, billing, payments, receipts, NFC access, inventory, vendors, reports, floor plans, and night audit into one consistent system.
+StayPilot is a private, multi-property hotel operating system that brings the front desk, reservations, guests, rooms, housekeeping, engineering, service recovery, billing, payments, receipts, NFC access, inventory, procurement, dining, room service, events, spa, transport, reports, floor plans, and night audit into one consistent system.
 
 It is built as an operational application rather than a collection of disconnected dashboard mockups. PostgreSQL owns hotel data, authenticated APIs enforce hotel and role boundaries, and critical workflows update all connected records together.
 
@@ -37,6 +37,8 @@ It is built as an operational application rather than a collection of disconnect
 - **Fresh by default:** the seed creates the property structure but no guests, bookings, bills, staff, or access credentials.
 - **Hotel-controlled access:** the first owner creates the property account; no default credentials are shipped.
 - **In-house interface:** product controls, overlays, menus, data tables, and operating flows are maintained inside the codebase.
+- **Property isolation:** every session selects one authorized property and every read, command, document, device, integration, and report is scoped to it.
+- **Adapter-based integrations:** Stripe, Resend, OTA, POS, accounting export, and NFC hardware connect through authenticated server endpoints without moving operational logic into the browser.
 
 ## Feature Directory
 
@@ -47,31 +49,34 @@ It is built as an operational application rather than a collection of disconnect
 | **Bookings** | Create and manage reservations, stay dates, booking status, room assignment, and source details. |
 | **Group Reservations** | Organize multi-room stays and keep group movements visible to operations. |
 | **Guests** | Maintain guest profiles, contact details, preferences, stay history, and linked activity. |
-| **Rooms** | Browse all 101 rooms across 20 floors and control availability, occupancy, cleaning, blocking, and service state. |
+| **Rooms** | Browse every room in the active property and control availability, occupancy, cleaning, blocking, and service state. |
 | **Housekeeping** | Run turnover queues, room cleaning, inspections, priorities, ownership, and completion. |
 | **Maintenance** | Raise engineering tickets, classify urgency, connect work to rooms, and restore inventory safely. |
-| **Service Operations** | Coordinate guest-facing service work from one operating queue. |
+| **Service Operations** | Dispatch cross-department work, incidents, safety follow-up, and lost-and-found custody. |
+| **Hotel Departments** | Operate restaurants, room service, bars, event venues, spa appointments, guest services, and transport queues. |
 | **Complaints** | Record service issues, priority, ownership, status, and resolution progress. |
 | **Billing** | Build guest folios and invoices, add charge lines, track balances, and generate PDFs. |
 | **Payments** | Capture enabled payment methods, update invoice balances, and process controlled refunds. |
 | **Receipts** | Review numbered receipts and create printable receipt documents. |
 | **Room Cards** | Issue, monitor, expire, and revoke NFC/RFID room credentials. |
 | **Access Tracker** | Review credential events and room-access history for security follow-up. |
-| **Inventory** | Track hotel stock, reorder levels, unit cost, and operational availability. |
+| **Inventory** | Track hotel stock, reorder levels, movements, receipts, waste, and operational availability. |
+| **Procurement** | Raise purchase orders, enforce approval transitions, receive partial or complete deliveries, and update stock. |
 | **Vendors** | Maintain supplier contacts and the partners connected to hotel operations. |
 | **Blueprints** | Work with floor-by-floor operating plans linked to the room structure. |
 | **Documents** | Keep property documents and generated operational files discoverable. |
-| **Reports** | Review hotel performance and operational summaries from current system data. |
+| **Reports** | Review server-calculated performance, occupancy forecast, receivable aging, source mix, SLA health, CSV exports, and scheduled management packs. |
 | **Night Audit** | Close the business date through a dedicated audit workspace. |
 | **Handovers** | Record shift context so unresolved work moves safely between teams. |
 | **Notifications** | Review system alerts and operational follow-ups in one inbox. |
-| **Integrations** | View and manage configured property connectors and payment rails. |
-| **Settings** | Configure property details, staff access, roles, policies, and operating preferences. |
+| **Integrations** | Manage payment, email, OTA, POS, accounting, messaging, and NFC device connectors with sync history. |
+| **Settings** | Configure the property portfolio, staff invitations, roles, MFA, policies, themes, and operating preferences. |
 
 ## Built-In Safety
 
 - Passwords are hashed with Node.js `scrypt` and a unique salt.
 - Session cookies are HTTP-only, `SameSite=Lax`, secure in production, and valid for 14 days.
+- Login throttling, account lockout, password reset, MFA, session listing, and session revocation are enforced server-side.
 - Only SHA-256 session-token hashes are stored in the database.
 - Every state request is resolved from the authenticated user's hotel scope.
 - Disabled users and expired or revoked sessions are rejected by the backend.
@@ -79,6 +84,7 @@ It is built as an operational application rather than a collection of disconnect
 - Checkout expires room credentials, marks the room dirty, and creates turnover work in one transaction.
 - Payment and refund operations use serializable database transactions.
 - Sensitive actions produce actor and target audit records.
+- Webhook signatures, device bearer tokens, idempotency ledgers, encrypted NFC command payloads, and property access records protect external operations.
 
 ## Quick Start
 
@@ -86,7 +92,7 @@ It is built as an operational application rather than a collection of disconnect
 
 Install the following before starting:
 
-- Node.js 20 or newer
+- Node.js 22 or newer
 - npm 10 or newer
 - PostgreSQL 15 or newer
 - Git
@@ -118,7 +124,11 @@ cp .env.example .env
 
 ```env
 DATABASE_URL="postgresql://staypilot:replace-with-a-strong-password@localhost:5432/staypilot?schema=public"
+APP_ENCRYPTION_KEY="replace-with-32-random-bytes-encoded-as-base64"
+APP_URL="http://localhost:3000"
 ```
+
+Only `DATABASE_URL` and `APP_ENCRYPTION_KEY` are required for the core suite. Provider variables are required when their integrations are enabled; see [Environment Reference](#environment-reference).
 
 Never commit `.env`. It is excluded by `.gitignore`.
 
@@ -142,7 +152,7 @@ Open [http://localhost:3000](http://localhost:3000). A new installation redirect
 
 ### 6. Create the first owner
 
-1. Enter the property name and the owner's staff details.
+1. Enter the owner's staff details. The seeded primary property becomes the owner's home property.
 2. Use a private work email and a strong, unique password.
 3. Submit the setup form once; this becomes the first authorized property account.
 4. Sign in and open **Settings** before beginning live operations.
@@ -153,14 +163,15 @@ No default username, password, demo guest, or pre-filled booking is included.
 
 Complete these steps in order before the hotel starts using the system:
 
-1. **Property identity:** verify the property name, address, contact information, currency, taxes, and operating timezone in **Settings**.
+1. **Property portfolio:** verify the primary property, then provision additional hotels in **Settings** with 1–50 floors and 4–6 rooms per floor.
 2. **Staff access:** add only active hotel employees, assign the minimum role required, and verify each account before sharing access.
 3. **Room inventory:** review all floors and room numbers in **Rooms**. Confirm room type, floor, and initial availability.
 4. **Payment rails:** enable only the payment methods the property is prepared to accept in **Integrations** or **Settings**.
 5. **Policies:** review check-in, checkout, cancellation, refund, access-card, and data-retention policies.
 6. **Vendors and inventory:** add suppliers and confirm stock units, minimum levels, and current quantities.
 7. **Floor plans:** review the 20 seeded floor blueprints and connect operating zones to the correct rooms.
-8. **Opening checks:** confirm there are zero guests, bookings, invoices, payments, and room credentials before entering live data.
+8. **Departments:** confirm outlets, event venues, spa/service teams, and transport procedures in **Hotel Departments**.
+9. **Opening checks:** confirm there are zero guests, bookings, invoices, payments, and room credentials before entering live data.
 
 ## Operator Manual
 
@@ -261,6 +272,62 @@ StayPilot manages credential records and access-event history. Physical encoding
 4. Update quantities when goods are received or issued.
 5. Keep supplier and cost information current for purchasing decisions.
 
+### Procurement and receiving
+
+1. Create a purchase order from **Procurement** using an active vendor and existing stock items.
+2. Submit it for manager approval; only a hotel administrator or manager can approve the order.
+3. Move the approved order to ordered when it is released to the supplier.
+4. Record partial or complete receipts against individual order lines.
+5. Verify that each receipt created an inventory movement and increased stock by the accepted quantity.
+
+### Dining, room service, and guest folios
+
+1. Configure restaurants, bars, room service, minibar, and banquet outlets in **Hotel Departments**.
+2. Open an order against a guest invoice whenever the charge must reach the room folio.
+3. Move the order through preparation and service.
+4. Post the served order once. StayPilot creates a financial line item and recalculates invoice totals transactionally.
+5. Void an order before posting when service is cancelled; posted orders remain part of the financial record.
+
+### Events, spa, and transport
+
+1. Reserve event venues with start and end times; overlapping active reservations for the same venue are refused.
+2. Move events from tentative to confirmed, in progress, and completed as the function progresses.
+3. Book spa or guest-service appointments with an assigned team member; overlapping staff appointments are refused.
+4. Link a chargeable appointment to an invoice so completion posts the service to the guest folio once.
+5. Create transport requests, confirm them, dispatch a named driver, and complete the journey from the transport board.
+
+### Multi-property operation
+
+1. Open **Settings** as a hotel administrator and create a property using a unique code, location, currency, floor count, and 4–6 rooms per floor.
+2. StayPilot provisions room types, rooms, floor blueprints, payment rails, integration records, outlets, and the first night-audit record together.
+3. Use the fixed sidebar property selector to change the active hotel.
+4. Confirm the active property badge before changing rooms, payments, users, devices, or settings.
+5. Property-specific roles are enforced by the server; access to one hotel never grants access to another automatically.
+
+### Cashiering and reconciliation
+
+1. Open a cashier shift with the counted opening float before accepting cash.
+2. Record cash-in, cash-out, and safe-drop movements while the drawer is active.
+3. Close the shift with the physical count and investigate any calculated variance.
+4. Reconcile payment totals by method, provider, period, and actual settlement amount.
+5. Use credit notes for approved invoice reductions and refunds for reversals of captured payments.
+
+### Documents and guest delivery
+
+1. Upload approved files in **Documents**; originals are stored in PostgreSQL with MIME type, size, and checksum metadata.
+2. Use templates for repeatable guest or operational communication.
+3. Download authenticated invoice, receipt, and report documents from their linked records.
+4. Configure Resend to deliver email and track delivery events through the signed webhook.
+5. Apply hotel retention rules to guest documents and exports before production use.
+
+### Scheduled reporting
+
+1. Review live server-side metrics in **Reports**, including occupancy forecast, receivable aging, booking source, and SLA exposure.
+2. Export supported datasets as CSV for authorized offline analysis.
+3. Create a daily, weekly, or monthly report schedule with recipients and the next run time.
+4. Configure `CRON_SECRET` and invoke `/api/cron/reports` from the platform scheduler.
+5. Review persisted report runs, generated management-pack documents, and delivery records after each execution.
+
 ### Shift handover
 
 1. Open **Handovers** before the outgoing team leaves.
@@ -278,7 +345,7 @@ StayPilot manages credential records and access-event history. Physical encoding
 
 ## Room Inventory
 
-The fresh property seed creates **101 available rooms across 20 floors**, with four to six rooms per floor and six configurable room types. It also creates one editable blueprint for every floor.
+The primary fresh-property seed creates **101 available rooms across 20 floors**, with four to six rooms per floor and six configurable room types. It also creates one editable blueprint for every floor. Additional properties are provisioned with the administrator-selected floor count and a consistent four, five, or six rooms per floor.
 
 The seed does not allocate any room. Every room starts without a guest, booking, folio, card, cleaning task, or maintenance ticket.
 
@@ -293,6 +360,9 @@ Core workflow guarantees include:
 - Payment capture updates the transaction, invoice balance, receipt, document record, and audit history together.
 - Refunds are idempotent and safely reverse invoice paid and balance totals.
 - Housekeeping and maintenance state changes update the connected room inside the same database transaction.
+- Outlet and appointment completion posts charges to a linked guest invoice exactly once through controlled status transitions.
+- Property switching updates the server session; client-supplied property identifiers cannot bypass property-access checks.
+- Scheduled report runners claim due work transactionally so concurrent cron invocations do not duplicate a report pack.
 
 For implementation details, read [Backend Architecture](./docs/BACKEND_ARCHITECTURE.md).
 
@@ -304,6 +374,12 @@ For implementation details, read [Backend Architecture](./docs/BACKEND_ARCHITECT
 | `npm run build` | Create and validate the optimized production build. |
 | `npm run start` | Run the completed production build. |
 | `npm run lint` | Run the ESLint quality gate. |
+| `npm run typecheck` | Validate all TypeScript contracts without emitting files. |
+| `npm run test` | Run deterministic domain and security unit tests. |
+| `npm run test:coverage` | Run unit tests with the enforced coverage report. |
+| `npm run test:e2e` | Run all browser and authenticated API lifecycle tests. |
+| `npm run check` | Run lint, typecheck, unit tests, and the production build. |
+| `npm run security:audit` | Fail on high-severity production dependency vulnerabilities. |
 | `npm run db:generate` | Regenerate Prisma Client after schema changes. |
 | `npm run db:migrate` | Create and apply a development migration. |
 | `npm run db:deploy` | Apply committed migrations in staging or production. |
@@ -322,11 +398,39 @@ StayPilot/
 ├── src/
 │   ├── app/                 # Product routes and API handlers
 │   ├── components/          # App shell and maintained UI components
-│   ├── lib/                 # Authentication, database, PDF, and shared logic
-│   └── server/              # Snapshot reads and transactional commands
+│   ├── domain/              # Deterministic finance, reservation, and policy rules
+│   ├── integrations/        # Stripe, signatures, and external adapter boundaries
+│   ├── lib/                 # Authentication, database, PDF, security, and shared logic
+│   └── server/              # Snapshots, reporting, payments, and transactional commands
+├── tests/                   # Unit and PostgreSQL-backed Playwright lifecycle coverage
 ├── docs/                    # Backend and build documentation
 ├── DESIGN.md                # Visual language and interaction decisions
 └── README.md                # Setup guide and operator manual
+```
+
+## Environment Reference
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `DATABASE_URL` | Yes | PostgreSQL connection used by Prisma and the runtime adapter. |
+| `APP_ENCRYPTION_KEY` | Yes | Base64-encoded 32-byte key for MFA and device-command secret encryption. |
+| `APP_URL` | Yes in hosted environments | Canonical URL used in invitations, resets, and payment redirects. |
+| `STRIPE_SECRET_KEY` | For Stripe | Server-side Stripe API credential. |
+| `STRIPE_WEBHOOK_SECRET` | For Stripe | Verifies payment webhook signatures. |
+| `STRIPE_PUBLISHABLE_KEY` | For Stripe UI | Publishable Stripe identifier when a client payment element is added. |
+| `RESEND_API_KEY` | For email | Sends guest and report email through Resend. |
+| `RESEND_FROM_EMAIL` | For email | Verified sender identity. |
+| `RESEND_WEBHOOK_SECRET` | For email tracking | Verifies Resend delivery events. |
+| `OTA_WEBHOOK_SECRET` | For OTA intake | HMAC secret for reservation events. |
+| `POS_WEBHOOK_SECRET` | For external POS | HMAC secret for folio-posting events. |
+| `WHATSAPP_ACCESS_TOKEN` | For WhatsApp | Provider access token used when messaging is connected. |
+| `CRON_SECRET` | For scheduled reports | Bearer secret required by the report scheduler endpoint. |
+
+Generate production secrets with a cryptographically secure generator. Do not reuse webhook, cron, device, database, or encryption credentials.
+
+```bash
+openssl rand -base64 32  # APP_ENCRYPTION_KEY
+openssl rand -hex 32     # webhook or CRON_SECRET
 ```
 
 ## Production Deployment
@@ -341,6 +445,9 @@ StayPilot/
 - Back up the database before high-risk migrations and test restoration regularly.
 - Restrict database network access to approved application and administration sources.
 - Define retention policies for audit events, access history, guest data, invoices, and receipts.
+- Configure Stripe, Resend, OTA, POS, NFC, and scheduled-report credentials only for adapters the property has approved.
+- Route `/api/health` to platform health checks and retain structured application logs in the deployment log service.
+- Run the application behind TLS; do not expose PostgreSQL or NFC device secrets to the browser.
 
 ### Deployment sequence
 
@@ -353,6 +460,18 @@ npm run start
 ```
 
 Run `npm run db:seed` only when establishing the property structure or intentionally repairing missing structural records. It should not be part of every application restart.
+
+### Docker Compose
+
+For a local containerized stack, set required application secrets in the Compose environment and run:
+
+```bash
+docker compose up --build
+docker compose exec app npm run db:deploy
+docker compose exec app npm run db:seed
+```
+
+The supplied image runs as a non-root user and exposes `/api/health`. Production deployments should use managed secrets and a managed PostgreSQL service rather than the example local password.
 
 ## Troubleshooting
 
@@ -390,8 +509,12 @@ Confirm that the payment rail is enabled for the property and that the requested
 Before opening a pull request or deploying a release, run:
 
 ```bash
-npm run lint
-npm run build
+npm run security:audit
+npm run db:generate
+npx prisma migrate status
+npm run test:coverage
+npm run check
+npm run test:e2e
 ```
 
 For schema changes, also generate Prisma Client, create a migration, test the migration against a non-production database, and verify the fresh seed.
@@ -406,7 +529,7 @@ For schema changes, also generate Prisma Client, create a migration, test the mi
 
 ## Project Status
 
-StayPilot is under active development. The current repository provides a complete operating foundation and connected core workflows. Before production use, each property must validate local legal, fiscal, privacy, payment, door-access, and retention requirements and complete any required hardware or provider integrations.
+StayPilot provides a complete, tested hotel operating foundation with multi-property PMS, finance, operations, departments, documents, reporting, integrations, and NFC bridge workflows. Provider credentials and compatible physical hardware are intentionally deployment-specific. Before live use, each property must validate local legal, fiscal, privacy, payment, door-access, backup, and retention requirements and certify every connected provider and device.
 
 ---
 

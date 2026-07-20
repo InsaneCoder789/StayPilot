@@ -21,7 +21,9 @@ const schema = z.object({
 export async function POST(request: Request) {
   const rawBody = await request.text();
   if (!verifySharedSignature(rawBody, request.headers.get("x-staypilot-signature"), process.env.OTA_WEBHOOK_SECRET)) return NextResponse.json({ ok: false }, { status: 401 });
-  const parsed = schema.safeParse(JSON.parse(rawBody));
+  let payload: unknown;
+  try { payload = JSON.parse(rawBody); } catch { return NextResponse.json({ ok: false, message: "Invalid JSON payload." }, { status: 400 }); }
+  const parsed = schema.safeParse(payload);
   if (!parsed.success || new Date(parsed.data.checkOut) <= new Date(parsed.data.checkIn)) return NextResponse.json({ ok: false, message: "Invalid reservation payload." }, { status: 400 });
   const provider = (request.headers.get("x-staypilot-provider") || "OTA").toUpperCase().slice(0, 60);
   const eventId = request.headers.get("x-staypilot-event-id")?.slice(0, 200);

@@ -300,6 +300,9 @@ test("integration bridge authenticates NFC hardware and idempotent OTA, POS, and
 
   try {
     expect((await request.post("/api/auth/bootstrap", { data: { name: "E2E Integrations", email, password: "StayPilot!Integrations2026" } })).ok()).toBe(true);
+    const malformed = "{not-json";
+    expect((await request.post("/api/integrations/ota/reservations", { headers: { "Content-Type": "application/json", "x-staypilot-signature": sign(malformed, "e2e-ota-shared-secret") }, data: Buffer.from(malformed) })).status()).toBe(400);
+    expect((await request.post("/api/integrations/pos/folio", { headers: { "Content-Type": "application/json", "x-staypilot-signature": sign(malformed, "e2e-pos-shared-secret") }, data: Buffer.from(malformed) })).status()).toBe(400);
     const hotel = await db.hotel.findFirstOrThrow({ orderBy: { createdAt: "asc" } });
     const command = async (action: string, payload: Record<string, unknown> = {}) => {
       const response = await request.post("/api/hotel/command", { data: { action, payload } });

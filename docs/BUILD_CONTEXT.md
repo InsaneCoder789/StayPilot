@@ -2,27 +2,19 @@
 
 ## Product Positioning
 
-StayPilot is an AI-powered hotel operations platform for single-property hotels in V1, especially properties with roughly 10 to 80 rooms. The goal is to unify bookings, room status, guests, housekeeping, maintenance, complaints, billing, and manager visibility in one web dashboard.
+StayPilot is a multi-property hotel operating system. It unifies reservations, room control, guests, housekeeping, engineering, service recovery, finance, access control, procurement, dining, events, spa, transport, documents, integrations, and management reporting in one authenticated workspace.
 
-AI is supportive, not authoritative. It can answer policy questions with retrieval, summarize guests and daily operations, and classify complaints, but it must not decide final billing, refunds, tax, or permission overrides.
+## Shipped Scope
 
-## MVP Scope
-
-The first release should include:
-
-- Authentication and role-based access
-- Hotel setup and staff management
-- Room types, rooms, and room status lifecycle
-- Guest profiles and guest history
-- Booking management
-- Check-in and check-out workflows
-- Housekeeping tasks
-- Maintenance tickets
-- Complaints and guest requests
-- Basic billing records
-- Policy RAG assistant
-- AI daily summary
-- AI guest summary
+- Authentication, MFA, invitations, session control, and property-scoped roles
+- Hotel setup, portfolio switching, room types, floor plans, rooms, and room-state lifecycle
+- Guest profiles, reservations, group stays, check-in, stay extension, room moves, and checkout
+- Housekeeping, maintenance, complaints, tasks, incidents, lost-and-found, inventory, and procurement
+- Transactional invoices, receipts, payments, refunds, credit notes, cashiering, and reconciliation
+- Secure document storage, generated PDFs, templates, communication, and delivery tracking
+- Outlet POS, event venue, appointment, and transport workflows
+- NFC hardware bridge, OTA and POS webhooks, accounting exports, and sync history
+- Server-side metrics, CSV exports, scheduled report packs, and night audit
 
 ## Primary Roles
 
@@ -35,32 +27,31 @@ The first release should include:
 
 ## Operational Truths
 
-- Dirty, maintenance, and blocked rooms cannot be assigned during normal check-in.
-- Checkout must mark the stay completed, mark the room dirty, and create a housekeeping task.
-- Billing totals remain deterministic backend logic.
-- AI policy answers must cite hotel-specific source material.
-- Sensitive guest data must be access-controlled by role.
+- Dirty, maintenance, blocked, and out-of-service rooms cannot be assigned during normal check-in.
+- Active room reservations cannot overlap at the database or command layer.
+- Checkout completes the stay, marks the room dirty, creates housekeeping work, and expires room credentials.
+- Billing totals, taxes, credits, refunds, and receipts remain deterministic backend logic.
+- Sensitive guest and financial data is hotel-scoped and role-controlled.
+- Outlet and service charges reach a guest folio only through controlled, one-time posting transitions.
+- Property switching changes the server session and effective role after an access check.
 
-## Suggested Technical Direction
+## Technical Direction
 
-- Frontend and main app: Next.js App Router, TypeScript, Tailwind
-- Data model: PostgreSQL with Prisma
-- Vector search: pgvector for V1
-- Files: Supabase Storage or Cloudflare R2
-- AI service split: Next.js app plus separate Python processing service for document extraction, chunking, embeddings, and heavier pipelines
+- Frontend and server: Next.js App Router, React, TypeScript, and Tailwind CSS
+- Data model: PostgreSQL with Prisma and committed migrations
+- Files: authenticated PostgreSQL binary storage with checksums and metadata
+- Integrations: adapter boundaries with signed webhooks, idempotency, encrypted secrets, and audit history
+- Verification: Vitest coverage, PostgreSQL-backed Playwright journeys, production builds, dependency audit, and GitHub Actions
 
-## Build Order
+## Completed Build Order
 
-1. App foundation, navigation, and domain model
-2. Auth and permissions
-3. Room and room-type management
-4. Guests and bookings
-5. Check-in and check-out
-6. Housekeeping, maintenance, complaints
-7. Billing primitives
-8. RAG document ingestion and policy assistant
-9. Daily and guest AI summaries
+1. Production foundation, database, testing, CI, deployment, and observability
+2. Identity, MFA, sessions, invitations, and property-scoped roles
+3. Reservation, room, check-in, move, extension, and checkout lifecycle
+4. Finance, payment adapters, receipts, credits, cashiering, and reconciliation
+5. Operations, procurement, documents, communications, NFC, and external integrations
+6. Reporting, scheduling, multi-property control, and hotel departments
 
 ## Source Docs
 
-Canonical proposal docs live in `/Users/rohanc/Documents/StayPilot/hotel_ai_management_proposal/`.
+Canonical proposal documents remain in `hotel_ai_management_proposal/` for requirements traceability. The current implementation and operator behavior are documented in `README.md` and `docs/BACKEND_ARCHITECTURE.md`.

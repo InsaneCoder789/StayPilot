@@ -22,6 +22,17 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://staypilot:staypilot-local@postgres:5432/staypilot?schema=public
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?Set APP_ENCRYPTION_KEY in .env}
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-}
+      RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET:-}
+      OTA_WEBHOOK_SECRET: ${OTA_WEBHOOK_SECRET:-}
+      POS_WEBHOOK_SECRET: ${POS_WEBHOOK_SECRET:-}
+      WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
+      CRON_SECRET: ${CRON_SECRET:-}
     ports:
       - "3000:3000"
 
