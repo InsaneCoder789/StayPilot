@@ -12,8 +12,9 @@ const today = new Date().toISOString().slice(0, 10);
 const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
 
 export default function BookingsPage() {
-  const { state, createBooking, checkInBooking, checkOutBooking } = useHotel();
+  const { state, createBooking, assignBookingRoom, updateBookingDates, cancelBooking, markBookingNoShow, checkInBooking, checkOutBooking, extendStay, moveRoom } = useHotel();
   const [message, setMessage] = useState("");
+  const [bookingDrafts, setBookingDrafts] = useState<Record<string, { checkIn: string; checkOut: string; reason: string }>>({});
   const [form, setForm] = useState({
     guestName: "",
     phone: "",
@@ -24,6 +25,7 @@ export default function BookingsPage() {
     source: "WALK_IN",
     specialRequests: "",
     totalAmount: 1200,
+    depositRequired: 0,
     companyName: "",
   });
 
@@ -117,6 +119,14 @@ export default function BookingsPage() {
               placeholder="Total amount"
               className="suite-input"
             />
+            <input
+              type="number"
+              min="0"
+              value={form.depositRequired}
+              onChange={(event) => setForm((current) => ({ ...current, depositRequired: Number(event.target.value) }))}
+              placeholder="Required deposit"
+              className="suite-input"
+            />
             <textarea
               value={form.specialRequests}
               onChange={(event) =>
@@ -130,8 +140,10 @@ export default function BookingsPage() {
             />
           </div>
           <button
-            onClick={() => {
-              createBooking(form);
+            onClick={async () => {
+              const result = await createBooking(form);
+              setMessage(result.message);
+              if (!result.ok) return;
               setForm({
                 guestName: "",
                 phone: "",
@@ -142,6 +154,7 @@ export default function BookingsPage() {
                 source: "WALK_IN",
                 specialRequests: "",
                 totalAmount: 1200,
+                depositRequired: 0,
                 companyName: "",
               });
             }}
@@ -184,38 +197,28 @@ export default function BookingsPage() {
                   </div>
                 </div>
 
-                <div className="mt-4 flex flex-wrap items-center gap-3">
-                  {booking.status !== "CHECKED_IN" &&
-                  booking.status !== "CHECKED_OUT" ? (
-                    <div className="min-w-[240px]">
-                      <CustomSelect
-                        value=""
-                        placeholder="Check in to room"
-                        onChange={async (value) => {
-                          const result = await checkInBooking(booking.id, value);
-                          setMessage(result.message);
-                        }}
-                        options={assignableRooms
-                          .filter(
-                            (room) =>
-                              room.roomType === booking.roomType || room.status === "AVAILABLE",
-                          )
-                          .map((room) => ({
-                            value: room.roomNumber,
-                            label: `${room.roomNumber} • ${room.status}`,
-                          }))}
-                      />
+                {["PENDING", "CONFIRMED"].includes(booking.status) ? (
+                  <div className="mt-4 grid gap-3 border-t border-[var(--line)] pt-4">
+                    <div className="grid gap-3 lg:grid-cols-[minmax(14rem,.8fr)_1fr_auto]">
+                      <CustomSelect value={booking.roomNumber ?? ""} placeholder="Reserve matching room" onChange={async (value) => setMessage((await assignBookingRoom(booking.id, value)).message)} options={assignableRooms.filter((room) => room.roomType === booking.roomType).map((room) => ({ value: room.roomNumber, label: `${room.roomNumber} • ${room.status}` }))} />
+                      <div className="grid grid-cols-2 gap-2"><input type="date" className="suite-input" value={bookingDrafts[booking.id]?.checkIn ?? booking.checkIn} onChange={(event) => setBookingDrafts((current) => ({ ...current, [booking.id]: { checkIn: event.target.value, checkOut: current[booking.id]?.checkOut ?? booking.checkOut, reason: current[booking.id]?.reason ?? "" } }))} /><input type="date" className="suite-input" value={bookingDrafts[booking.id]?.checkOut ?? booking.checkOut} onChange={(event) => setBookingDrafts((current) => ({ ...current, [booking.id]: { checkIn: current[booking.id]?.checkIn ?? booking.checkIn, checkOut: event.target.value, reason: current[booking.id]?.reason ?? "" } }))} /></div>
+                      <button className="suite-button" onClick={async () => { const draft = bookingDrafts[booking.id] ?? booking; setMessage((await updateBookingDates(booking.id, draft.checkIn, draft.checkOut)).message); }}>Update dates</button>
                     </div>
-                  ) : null}
-                  {booking.status === "CHECKED_IN" ? (
-                    <button
-                      onClick={() => checkOutBooking(booking.id)}
-                      className="suite-button suite-button-primary"
-                    >
-                      Complete checkout
-                    </button>
-                  ) : null}
-                </div>
+                    <div className="flex flex-wrap gap-2">
+                      {booking.roomNumber ? <button className="suite-button suite-button-primary" onClick={async () => setMessage((await checkInBooking(booking.id, booking.roomNumber!)).message)}>Check in room {booking.roomNumber}</button> : null}
+                      <input className="suite-input min-w-[16rem] flex-1" value={bookingDrafts[booking.id]?.reason ?? ""} onChange={(event) => setBookingDrafts((current) => ({ ...current, [booking.id]: { checkIn: current[booking.id]?.checkIn ?? booking.checkIn, checkOut: current[booking.id]?.checkOut ?? booking.checkOut, reason: event.target.value } }))} placeholder="Cancellation reason" />
+                      <button className="suite-button" onClick={async () => setMessage((await cancelBooking(booking.id, bookingDrafts[booking.id]?.reason ?? "")).message)}>Cancel</button>
+                      <button className="suite-button" onClick={async () => setMessage((await markBookingNoShow(booking.id)).message)}>No-show</button>
+                    </div>
+                  </div>
+                ) : null}
+                {booking.status === "CHECKED_IN" ? (
+                  <div className="mt-4 grid gap-3 border-t border-[var(--line)] pt-4 lg:grid-cols-[1fr_1fr_auto]">
+                    <CustomSelect value="" placeholder="Move to matching room" onChange={async (value) => setMessage((await moveRoom(booking.id, value)).message)} options={state.rooms.filter((room) => room.status === "AVAILABLE" && room.roomType === booking.roomType).map((room) => ({ value: room.roomNumber, label: `Room ${room.roomNumber}` }))} />
+                    <div className="flex gap-2"><input type="date" className="suite-input" value={bookingDrafts[booking.id]?.checkOut ?? booking.checkOut} onChange={(event) => setBookingDrafts((current) => ({ ...current, [booking.id]: { checkIn: booking.checkIn, checkOut: event.target.value, reason: "" } }))} /><button className="suite-button" onClick={async () => setMessage((await extendStay(booking.id, bookingDrafts[booking.id]?.checkOut ?? booking.checkOut)).message)}>Extend</button></div>
+                    <button onClick={async () => setMessage((await checkOutBooking(booking.id)).message)} className="suite-button suite-button-primary">Complete checkout</button>
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>

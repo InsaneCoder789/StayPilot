@@ -5,6 +5,7 @@ import type { Prisma, User } from "@/generated/prisma/client";
 
 import { applyPayment, applyRefund, calculateTax } from "@/domain/finance";
 import { passwordPolicyError } from "@/domain/password-policy";
+import { normalizeBusinessDate, stayNights } from "@/domain/reservations";
 import { hashPassword } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 
@@ -15,7 +16,7 @@ type Result = { ok: boolean; message: string; invoiceId?: string; receiptId?: st
 const roleCommands: Record<User["role"], string[] | "*"> = {
   HOTEL_ADMIN: "*",
   MANAGER: "*",
-  RECEPTIONIST: ["setRoomStatus", "createBooking", "checkInBooking", "checkOutBooking", "createGroupReservation", "createComplaint", "updateComplaintStatus", "createInvoice", "recordPayment", "updateGuestNotes", "issueRoomCard", "updateRoomCardStatus", "recordNfcEvent", "addDocument", "addNotification", "markNotificationRead", "createHandover"],
+  RECEPTIONIST: ["setRoomStatus", "createBooking", "assignBookingRoom", "updateBookingDates", "cancelBooking", "markBookingNoShow", "checkInBooking", "checkOutBooking", "extendStay", "moveRoom", "createGroupReservation", "createComplaint", "updateComplaintStatus", "createInvoice", "recordPayment", "updateGuestNotes", "issueRoomCard", "updateRoomCardStatus", "recordNfcEvent", "addDocument", "addNotification", "markNotificationRead", "createHandover"],
   HOUSEKEEPING: ["setRoomStatus", "updateHousekeepingStatus", "addInventoryItem", "adjustInventoryItem", "addNotification", "markNotificationRead", "createHandover"],
   MAINTENANCE: ["setRoomStatus", "createMaintenanceTicket", "updateMaintenanceStatus", "addInventoryItem", "adjustInventoryItem", "addVendor", "addDocument", "addNotification", "markNotificationRead", "createHandover"],
   ACCOUNTANT: ["createInvoice", "recordPayment", "refundPayment", "togglePaymentGateway", "addDocument", "markNotificationRead", "runNightAudit"],
@@ -29,7 +30,21 @@ export function canExecuteHotelCommand(role: User["role"], action: string) {
 const text = (payload: Payload, key: string) => String(payload[key] ?? "").trim();
 const number = (payload: Payload, key: string) => Number(payload[key] ?? 0);
 const date = (value: unknown) => new Date(`${String(value)}T12:00:00.000Z`);
-const code = (prefix: string, digits = 5) => `${prefix}-${new Date().getUTCFullYear()}-${randomInt(10 ** (digits - 1), 10 ** digits)}`;
+
+async function nextDocumentCode(
+  tx: Prisma.TransactionClient,
+  hotelId: string,
+  kind: string,
+  prefix: string,
+  digits = 6,
+) {
+  const sequence = await tx.documentSequence.upsert({
+    where: { hotelId_kind: { hotelId, kind } },
+    create: { hotelId, kind, currentValue: 1 },
+    update: { currentValue: { increment: 1 } },
+  });
+  return `${prefix}-${new Date().getUTCFullYear()}-${String(sequence.currentValue).padStart(digits, "0")}`;
+}
 
 async function audit(
   tx: Prisma.TransactionClient,
@@ -43,6 +58,27 @@ async function audit(
 ) {
   await tx.auditLog.create({
     data: { hotelId: actor.hotelId, userId: actor.id, actorName: actor.name, action, entityType, entityId, target, oldValue, newValue },
+  });
+}
+
+async function findRoomConflict(
+  tx: Prisma.TransactionClient,
+  hotelId: string,
+  roomId: string,
+  checkInAt: Date,
+  checkOutAt: Date,
+  excludeBookingId?: string,
+) {
+  return tx.booking.findFirst({
+    where: {
+      hotelId,
+      roomId,
+      id: excludeBookingId ? { not: excludeBookingId } : undefined,
+      status: { in: ["PENDING", "CONFIRMED", "CHECKED_IN"] },
+      checkInAt: { lt: checkOutAt },
+      checkOutAt: { gt: checkInAt },
+    },
+    select: { id: true, code: true, guestName: true },
   });
 }
 
@@ -103,35 +139,100 @@ export async function executeHotelCommand(actor: Actor, action: string, payload:
       const hotel = await db.hotel.findUniqueOrThrow({ where: { id: actor.hotelId } });
       const names = guestName.split(/\s+/);
       const tax = calculateTax(total, Number(hotel.taxRate));
-      const bookingCode = code("BK");
-      const invoiceNumber = code("INV", 4);
-      await db.$transaction(async (tx) => {
+      const bookingCode = await db.$transaction(async (tx) => {
+        const bookingCode = await nextDocumentCode(tx, actor.hotelId, "BOOKING", "BK");
+        const invoiceNumber = await nextDocumentCode(tx, actor.hotelId, "INVOICE", "INV");
         const guest = await tx.guest.create({ data: { hotelId: actor.hotelId, firstName: names.shift() ?? "Guest", lastName: names.join(" ") || "Walk-in", phone: text(payload, "phone"), email: text(payload, "email"), nationality: "", preferences: [], loyaltyPoints: Math.floor((total + tax) / 10), companyName: text(payload, "companyName") || null } });
-        const booking = await tx.booking.create({ data: { hotelId: actor.hotelId, code: bookingCode, guestId: guest.id, guestName, roomTypeName: text(payload, "roomType"), status: "CONFIRMED", source: text(payload, "source") || "DIRECT", checkInAt: date(payload.checkIn), checkOutAt: date(payload.checkOut), totalAmount: total + tax, specialRequests: text(payload, "specialRequests"), companyName: text(payload, "companyName") || null, createdByUserId: actor.id } });
+        const booking = await tx.booking.create({ data: { hotelId: actor.hotelId, code: bookingCode, guestId: guest.id, guestName, roomTypeName: text(payload, "roomType"), status: "CONFIRMED", source: text(payload, "source") || "DIRECT", checkInAt: date(payload.checkIn), checkOutAt: date(payload.checkOut), depositRequired: Math.max(0, Math.min(number(payload, "depositRequired"), total + tax)), totalAmount: total + tax, specialRequests: text(payload, "specialRequests"), companyName: text(payload, "companyName") || null, createdByUserId: actor.id } });
         const invoice = await tx.invoice.create({ data: { hotelId: actor.hotelId, bookingId: booking.id, guestId: guest.id, invoiceNumber, bookingCode, guestName, guestEmail: text(payload, "email") || null, subtotal: total, taxAmount: tax, totalAmount: total + tax, balanceAmount: total + tax, currency: hotel.currency, items: { create: [{ label: "Room charge", unitAmount: total, amount: total, category: "ROOM_CHARGE" }, { label: "Tax", unitAmount: tax, amount: tax, category: "TAX", taxRate: hotel.taxRate }] } } });
         await tx.document.create({ data: { hotelId: actor.hotelId, title: `Invoice ${invoiceNumber}`, type: "INVOICE", linkedRef: invoiceNumber } });
         await tx.notification.create({ data: { hotelId: actor.hotelId, title: "New booking created", message: `${guestName} added under ${bookingCode}.`, severity: "MEDIUM", audience: "RECEPTIONIST" } });
         await audit(tx, actor, "CREATE_BOOKING", "Booking", booking.id, bookingCode);
         await audit(tx, actor, "CREATE_INVOICE", "Invoice", invoice.id, invoiceNumber);
-      });
+        return bookingCode;
+      }, { isolationLevel: "Serializable" });
       return { ok: true, message: `${bookingCode} created.` };
     }
+    case "assignBookingRoom": {
+      const bookingId = text(payload, "bookingId");
+      const roomNumber = text(payload, "roomNumber");
+      return db.$transaction(async (tx) => {
+        const booking = await tx.booking.findFirst({ where: { id: bookingId, hotelId: actor.hotelId } });
+        const room = await tx.room.findFirst({ where: { roomNumber, hotelId: actor.hotelId }, include: { roomType: true } });
+        if (!booking || !room) return { ok: false, message: "Booking or room not found." };
+        if (!["PENDING", "CONFIRMED"].includes(booking.status)) return { ok: false, message: "Only pending or confirmed reservations can be assigned." };
+        if (room.outOfService || ["MAINTENANCE", "BLOCKED"].includes(room.status)) return { ok: false, message: "This room is out of service." };
+        if (room.roomType.name !== booking.roomTypeName) return { ok: false, message: `Room ${room.roomNumber} does not match ${booking.roomTypeName}.` };
+        const conflict = await findRoomConflict(tx, actor.hotelId, room.id, booking.checkInAt, booking.checkOutAt, booking.id);
+        if (conflict) return { ok: false, message: `Room ${room.roomNumber} conflicts with ${conflict.code}.` };
+        await tx.booking.update({ where: { id: booking.id }, data: { roomId: room.id } });
+        await tx.invoice.updateMany({ where: { hotelId: actor.hotelId, bookingId: booking.id }, data: { roomNumber: room.roomNumber } });
+        await audit(tx, actor, "ASSIGN_BOOKING_ROOM", "Booking", booking.id, `${booking.code} · Room ${room.roomNumber}`);
+        return { ok: true, message: `Room ${room.roomNumber} reserved for ${booking.code}.` };
+      }, { isolationLevel: "Serializable" });
+    }
+    case "updateBookingDates": {
+      const checkInAt = normalizeBusinessDate(text(payload, "checkIn"));
+      const checkOutAt = normalizeBusinessDate(text(payload, "checkOut"));
+      try { stayNights(checkInAt, checkOutAt); } catch { return { ok: false, message: "Checkout must be after check-in." }; }
+      return db.$transaction(async (tx) => {
+        const booking = await tx.booking.findFirst({ where: { id: text(payload, "bookingId"), hotelId: actor.hotelId } });
+        if (!booking) return { ok: false, message: "Booking not found." };
+        if (["CHECKED_OUT", "CANCELLED", "NO_SHOW"].includes(booking.status)) return { ok: false, message: "This reservation can no longer be amended." };
+        if (booking.roomId) {
+          const conflict = await findRoomConflict(tx, actor.hotelId, booking.roomId, checkInAt, checkOutAt, booking.id);
+          if (conflict) return { ok: false, message: `The assigned room conflicts with ${conflict.code}.` };
+        }
+        await tx.booking.update({ where: { id: booking.id }, data: { checkInAt, checkOutAt } });
+        await audit(tx, actor, "UPDATE_BOOKING_DATES", "Booking", booking.id, booking.code, { checkInAt: booking.checkInAt.toISOString(), checkOutAt: booking.checkOutAt.toISOString() }, { checkInAt: checkInAt.toISOString(), checkOutAt: checkOutAt.toISOString() });
+        return { ok: true, message: `${booking.code} dates updated.` };
+      }, { isolationLevel: "Serializable" });
+    }
+    case "cancelBooking": {
+      const reason = text(payload, "reason");
+      if (!reason) return { ok: false, message: "A cancellation reason is required." };
+      return db.$transaction(async (tx) => {
+        const booking = await tx.booking.findFirst({ where: { id: text(payload, "bookingId"), hotelId: actor.hotelId } });
+        if (!booking) return { ok: false, message: "Booking not found." };
+        if (!["PENDING", "CONFIRMED"].includes(booking.status)) return { ok: false, message: "Only pending or confirmed reservations can be cancelled." };
+        await tx.booking.update({ where: { id: booking.id }, data: { status: "CANCELLED", cancelledAt: new Date(), cancellationReason: reason } });
+        await tx.invoice.updateMany({ where: { hotelId: actor.hotelId, bookingId: booking.id, paidAmount: 0 }, data: { status: "VOID", balanceAmount: 0, notes: `Cancelled: ${reason}` } });
+        await tx.notification.create({ data: { hotelId: actor.hotelId, title: "Reservation cancelled", message: `${booking.code}: ${reason}`, severity: "MEDIUM", audience: "RECEPTIONIST" } });
+        await audit(tx, actor, "CANCEL_BOOKING", "Booking", booking.id, booking.code, { status: booking.status }, { status: "CANCELLED", reason });
+        return { ok: true, message: `${booking.code} cancelled.` };
+      }, { isolationLevel: "Serializable" });
+    }
+    case "markBookingNoShow": {
+      return db.$transaction(async (tx) => {
+        const booking = await tx.booking.findFirst({ where: { id: text(payload, "bookingId"), hotelId: actor.hotelId } });
+        if (!booking) return { ok: false, message: "Booking not found." };
+        if (!["PENDING", "CONFIRMED"].includes(booking.status)) return { ok: false, message: "Only an expected arrival can be marked no-show." };
+        await tx.booking.update({ where: { id: booking.id }, data: { status: "NO_SHOW", noShowAt: new Date() } });
+        await audit(tx, actor, "MARK_NO_SHOW", "Booking", booking.id, booking.code, { status: booking.status }, { status: "NO_SHOW" });
+        return { ok: true, message: `${booking.code} marked no-show.` };
+      }, { isolationLevel: "Serializable" });
+    }
     case "checkInBooking": {
-      const booking = await db.booking.findFirst({ where: { id: text(payload, "bookingId"), hotelId: actor.hotelId } });
-      const room = await db.room.findFirst({ where: { roomNumber: text(payload, "roomNumber"), hotelId: actor.hotelId } });
-      if (!booking || !room) return { ok: false, message: "Booking or room not found." };
-      if (!['AVAILABLE','RESERVED'].includes(room.status) || room.outOfService) return { ok: false, message: "Only available, in-service rooms can be assigned." };
-      await db.$transaction(async (tx) => {
+      return db.$transaction(async (tx) => {
+        const booking = await tx.booking.findFirst({ where: { id: text(payload, "bookingId"), hotelId: actor.hotelId } });
+        const room = await tx.room.findFirst({ where: { roomNumber: text(payload, "roomNumber"), hotelId: actor.hotelId }, include: { roomType: true } });
+        if (!booking || !room) return { ok: false, message: "Booking or room not found." };
+        if (!["PENDING", "CONFIRMED"].includes(booking.status)) return { ok: false, message: "This reservation is not eligible for check-in." };
+        if (!['AVAILABLE','RESERVED'].includes(room.status) || room.outOfService) return { ok: false, message: "Only available, in-service rooms can be assigned." };
+        if (room.roomType.name !== booking.roomTypeName) return { ok: false, message: `Room ${room.roomNumber} does not match ${booking.roomTypeName}.` };
+        const conflict = await findRoomConflict(tx, actor.hotelId, room.id, booking.checkInAt, booking.checkOutAt, booking.id);
+        if (conflict) return { ok: false, message: `Room ${room.roomNumber} conflicts with ${conflict.code}.` };
         await tx.booking.update({ where: { id: booking.id }, data: { roomId: room.id, status: "CHECKED_IN", actualCheckInAt: new Date() } });
         await tx.room.update({ where: { id: room.id }, data: { status: "OCCUPIED", guestName: booking.guestName, nextBookingAt: null } });
+        await tx.invoice.updateMany({ where: { hotelId: actor.hotelId, bookingId: booking.id }, data: { roomNumber: room.roomNumber } });
         await tx.roomStatusLog.create({ data: { hotelId: actor.hotelId, roomId: room.id, oldStatus: room.status, newStatus: "OCCUPIED", userId: actor.id, reason: `Check-in ${booking.code}` } });
         await audit(tx, actor, "CHECK_IN", "Booking", booking.id, `${booking.code} · Room ${room.roomNumber}`);
-      });
-      return { ok: true, message: `Checked in to room ${room.roomNumber}.` };
+        return { ok: true, message: `Checked in to room ${room.roomNumber}.` };
+      }, { isolationLevel: "Serializable" });
     }
     case "checkOutBooking": {
       const booking = await db.booking.findFirst({ where: { id: text(payload, "bookingId"), hotelId: actor.hotelId }, include: { room: true } });
-      if (!booking?.room) return { ok: false, message: "Checked-in booking not found." };
+      if (!booking?.room || booking.status !== "CHECKED_IN") return { ok: false, message: "Checked-in booking not found." };
       await db.$transaction(async (tx) => {
         await tx.booking.update({ where: { id: booking.id }, data: { status: "CHECKED_OUT", actualCheckOutAt: new Date() } });
         await tx.room.update({ where: { id: booking.room!.id }, data: { status: "DIRTY", guestName: null, housekeepingNote: "Checkout completed, cleaning required" } });
@@ -142,6 +243,45 @@ export async function executeHotelCommand(actor: Actor, action: string, payload:
         await audit(tx, actor, "CHECK_OUT", "Booking", booking.id, booking.code);
       });
       return { ok: true, message: `Checkout completed for ${booking.code}.` };
+    }
+    case "extendStay": {
+      const nextCheckOut = normalizeBusinessDate(text(payload, "checkOut"));
+      return db.$transaction(async (tx) => {
+        const booking = await tx.booking.findFirst({ where: { id: text(payload, "bookingId"), hotelId: actor.hotelId }, include: { room: true } });
+        if (!booking?.room || booking.status !== "CHECKED_IN") return { ok: false, message: "An active checked-in stay is required." };
+        if (nextCheckOut <= booking.checkOutAt) return { ok: false, message: "The new checkout must extend the current stay." };
+        const conflict = await findRoomConflict(tx, actor.hotelId, booking.room.id, booking.checkInAt, nextCheckOut, booking.id);
+        if (conflict) return { ok: false, message: `Room ${booking.room.roomNumber} is committed to ${conflict.code}.` };
+        await tx.booking.update({ where: { id: booking.id }, data: { checkOutAt: nextCheckOut } });
+        await audit(tx, actor, "EXTEND_STAY", "Booking", booking.id, booking.code, { checkOutAt: booking.checkOutAt.toISOString() }, { checkOutAt: nextCheckOut.toISOString() });
+        return { ok: true, message: `${booking.code} extended to ${nextCheckOut.toISOString().slice(0, 10)}.` };
+      }, { isolationLevel: "Serializable" });
+    }
+    case "moveRoom": {
+      const targetRoomNumber = text(payload, "roomNumber");
+      return db.$transaction(async (tx) => {
+        const booking = await tx.booking.findFirst({ where: { id: text(payload, "bookingId"), hotelId: actor.hotelId }, include: { room: true } });
+        const target = await tx.room.findFirst({ where: { hotelId: actor.hotelId, roomNumber: targetRoomNumber }, include: { roomType: true } });
+        if (!booking?.room || booking.status !== "CHECKED_IN" || !target) return { ok: false, message: "Active stay or target room not found." };
+        if (target.id === booking.room.id) return { ok: false, message: "The guest is already in this room." };
+        if (target.status !== "AVAILABLE" || target.outOfService) return { ok: false, message: "The target room must be available and in service." };
+        if (target.roomType.name !== booking.roomTypeName) return { ok: false, message: `Room ${target.roomNumber} does not match ${booking.roomTypeName}.` };
+        const conflict = await findRoomConflict(tx, actor.hotelId, target.id, booking.checkInAt, booking.checkOutAt, booking.id);
+        if (conflict) return { ok: false, message: `Room ${target.roomNumber} conflicts with ${conflict.code}.` };
+        const oldRoom = booking.room;
+        await tx.booking.update({ where: { id: booking.id }, data: { roomId: target.id } });
+        await tx.room.update({ where: { id: oldRoom.id }, data: { status: "DIRTY", guestName: null, housekeepingNote: `Room move for ${booking.code}` } });
+        await tx.room.update({ where: { id: target.id }, data: { status: "OCCUPIED", guestName: booking.guestName } });
+        await tx.housekeepingTask.create({ data: { hotelId: actor.hotelId, roomId: oldRoom.id, status: "PENDING", priority: "HIGH", taskType: "ROOM_MOVE_CLEANING", assignee: "Unassigned" } });
+        await tx.roomCard.updateMany({ where: { hotelId: actor.hotelId, roomId: oldRoom.id, status: { in: ["ACTIVE", "ENCODED"] } }, data: { status: "EXPIRED", revokedAt: new Date() } });
+        await tx.invoice.updateMany({ where: { hotelId: actor.hotelId, bookingId: booking.id }, data: { roomNumber: target.roomNumber } });
+        await tx.roomStatusLog.createMany({ data: [
+          { hotelId: actor.hotelId, roomId: oldRoom.id, oldStatus: oldRoom.status, newStatus: "DIRTY", userId: actor.id, reason: `Room move ${booking.code}` },
+          { hotelId: actor.hotelId, roomId: target.id, oldStatus: target.status, newStatus: "OCCUPIED", userId: actor.id, reason: `Room move ${booking.code}` },
+        ] });
+        await audit(tx, actor, "MOVE_ROOM", "Booking", booking.id, booking.code, { roomNumber: oldRoom.roomNumber }, { roomNumber: target.roomNumber });
+        return { ok: true, message: `${booking.code} moved to room ${target.roomNumber}. Reissue the room card.` };
+      }, { isolationLevel: "Serializable" });
     }
     case "createGroupReservation": {
       const group = await db.groupReservation.create({ data: { hotelId: actor.hotelId, groupName: text(payload, "groupName"), companyName: text(payload, "companyName") || null, roomCount: number(payload, "roomCount") } });
@@ -204,14 +344,14 @@ export async function executeHotelCommand(actor: Actor, action: string, payload:
       const lines = Array.isArray(payload.lineItems) ? payload.lineItems.filter((item): item is { label: string; amount: number } => Boolean(item && typeof item === "object" && "label" in item && "amount" in item)).map((item) => ({ label: String(item.label).trim(), amount: Number(item.amount) })).filter((item) => item.label && item.amount !== 0) : [];
       const total = lines.reduce((sum, item) => sum + item.amount, 0);
       if (!text(payload, "guestName") || total <= 0) return { ok: false, message: "Add a guest name and at least one positive line item." };
-      const invoiceNumber = code("INV", 4);
       const invoice = await db.$transaction(async (tx) => {
+        const invoiceNumber = await nextDocumentCode(tx, actor.hotelId, "INVOICE", "INV");
         const row = await tx.invoice.create({ data: { hotelId: actor.hotelId, invoiceNumber, bookingCode: text(payload, "bookingCode") || "DIRECT-FOLIO", guestName: text(payload, "guestName"), guestEmail: text(payload, "guestEmail") || null, roomNumber: text(payload, "roomNumber") || null, subtotal: total, totalAmount: total, balanceAmount: total, dueAt: text(payload, "dueDate") ? date(payload.dueDate) : null, notes: text(payload, "notes") || null, createdByUserId: actor.id, items: { create: lines.map((line) => ({ label: line.label, unitAmount: line.amount, amount: line.amount })) } } });
         await tx.document.create({ data: { hotelId: actor.hotelId, title: `Invoice ${invoiceNumber}`, type: "INVOICE", linkedRef: invoiceNumber } });
         await audit(tx, actor, "CREATE_INVOICE", "Invoice", row.id, invoiceNumber);
         return row;
       });
-      return { ok: true, message: `${invoiceNumber} created.`, invoiceId: invoice.id };
+      return { ok: true, message: `${invoice.invoiceNumber} created.`, invoiceId: invoice.id };
     }
     case "recordPayment": {
       const invoice = await db.invoice.findFirst({ where: { id: text(payload, "invoiceId"), hotelId: actor.hotelId } });
@@ -223,26 +363,33 @@ export async function executeHotelCommand(actor: Actor, action: string, payload:
       if (requested <= 0 || Number(invoice.balanceAmount) <= 0) return { ok: false, message: "Enter a positive amount against an open balance." };
       const paymentState = applyPayment(Number(invoice.totalAmount), Number(invoice.paidAmount), requested);
       const amount = paymentState.captured;
-      const receiptNumber = code("RCT");
       const receipt = await db.$transaction(async (tx) => {
+        const receiptNumber = await nextDocumentCode(tx, actor.hotelId, "RECEIPT", "RCT");
         const payment = await tx.payment.create({ data: { hotelId: actor.hotelId, invoiceId: invoice.id, receiptNumber, guestName: invoice.guestName, amount, method, reference: text(payload, "reference") || `${method}-${randomInt(10_000_000, 99_999_999)}`, processedBy: actor.name } });
         await tx.invoice.update({
           where: { id: invoice.id },
           data: { paidAmount: paymentState.paid, balanceAmount: paymentState.balance, status: paymentState.status },
         });
+        if (invoice.bookingId) {
+          await tx.booking.update({
+            where: { id: invoice.bookingId },
+            data: { advancePaid: paymentState.paid, paymentStatus: paymentState.status },
+          });
+        }
         const row = await tx.receipt.create({ data: { hotelId: actor.hotelId, paymentId: payment.id, invoiceId: invoice.id, receiptNumber, invoiceNumber: invoice.invoiceNumber, guestName: invoice.guestName, amount, method } });
         await tx.document.create({ data: { hotelId: actor.hotelId, title: `Receipt ${receiptNumber}`, type: "RECEIPT", linkedRef: invoice.invoiceNumber } });
         await audit(tx, actor, "CAPTURE_PAYMENT", "Payment", payment.id, `${receiptNumber} · AED ${amount.toFixed(2)}`);
         return row;
       }, { isolationLevel: "Serializable" });
-      return { ok: true, message: `${receiptNumber} issued.`, receiptId: receipt.id };
+      return { ok: true, message: `${receipt.receiptNumber} issued.`, receiptId: receipt.id };
     }
     case "refundPayment": {
       const payment = await db.payment.findFirst({ where: { id: text(payload, "paymentId"), hotelId: actor.hotelId }, include: { invoice: true } });
       if (!payment) return { ok: false, message: "Payment not found." };
       if (payment.status === "REFUNDED") return { ok: false, message: "Payment has already been refunded." };
       await db.$transaction(async (tx) => {
-        await tx.payment.update({ where: { id: payment.id }, data: { status: "REFUNDED", refundedAt: new Date(), refundReference: code("REF") } });
+        const refundReference = await nextDocumentCode(tx, actor.hotelId, "REFUND", "REF");
+        await tx.payment.update({ where: { id: payment.id }, data: { status: "REFUNDED", refundedAt: new Date(), refundReference } });
         const refundState = applyRefund(
           Number(payment.invoice.totalAmount),
           Number(payment.invoice.paidAmount),
@@ -252,6 +399,12 @@ export async function executeHotelCommand(actor: Actor, action: string, payload:
           where: { id: payment.invoiceId },
           data: { paidAmount: refundState.paid, balanceAmount: refundState.balance, status: refundState.status },
         });
+        if (payment.invoice.bookingId) {
+          await tx.booking.update({
+            where: { id: payment.invoice.bookingId },
+            data: { advancePaid: refundState.paid, paymentStatus: refundState.status },
+          });
+        }
         await audit(tx, actor, "REFUND_PAYMENT", "Payment", payment.id, payment.receiptNumber);
       }, { isolationLevel: "Serializable" });
       return { ok: true, message: `${payment.receiptNumber} refunded.` };

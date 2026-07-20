@@ -105,10 +105,12 @@ export async function getHotelSnapshot(hotelId: string): Promise<HotelSnapshot> 
       checkOut: dateOnly(booking.checkOutAt),
       paymentStatus: booking.paymentStatus,
       advancePaid: Number(booking.advancePaid),
+      depositRequired: Number(booking.depositRequired),
       totalAmount: Number(booking.totalAmount),
       specialRequests: booking.specialRequests,
       companyName: booking.companyName ?? undefined,
       groupReservationId: booking.groupReservationId ?? undefined,
+      cancellationReason: booking.cancellationReason ?? undefined,
     })),
     housekeeping: hotel.housekeepingTasks.map((task) => ({
       id: task.id,

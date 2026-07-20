@@ -24,7 +24,7 @@ import type {
 import { initialHotelSnapshot } from "@/lib/hotel-data";
 
 type CommandResult = { ok: boolean; message: string; invoiceId?: string; receiptId?: string; requiresMfa?: boolean; resetUrl?: string; invitationUrl?: string; secret?: string; uri?: string };
-type BookingInput = { guestName: string; phone: string; email: string; roomType: string; checkIn: string; checkOut: string; source: string; specialRequests: string; totalAmount: number; companyName?: string };
+type BookingInput = { guestName: string; phone: string; email: string; roomType: string; checkIn: string; checkOut: string; source: string; specialRequests: string; totalAmount: number; depositRequired?: number; companyName?: string };
 type ComplaintInput = { guestName: string; roomNumber?: string; message: string };
 type MaintenanceInput = { roomNumber?: string; title: string; category: string; assignee: string; priority: MaintenanceTicketRecord["priority"]; description: string; vendorName?: string };
 type RoomCardInput = { roomNumber: string; guestName?: string; accessType: RoomCardRecord["accessType"] };
@@ -59,8 +59,14 @@ type HotelContextType = {
   resetHotelData: () => Promise<CommandResult>;
   setRoomStatus: (roomId: string, status: RoomStatus) => Promise<CommandResult>;
   createBooking: (input: BookingInput) => Promise<CommandResult>;
+  assignBookingRoom: (bookingId: string, roomNumber: string) => Promise<CommandResult>;
+  updateBookingDates: (bookingId: string, checkIn: string, checkOut: string) => Promise<CommandResult>;
+  cancelBooking: (bookingId: string, reason: string) => Promise<CommandResult>;
+  markBookingNoShow: (bookingId: string) => Promise<CommandResult>;
   checkInBooking: (bookingId: string, roomNumber: string) => Promise<CommandResult>;
   checkOutBooking: (bookingId: string) => Promise<CommandResult>;
+  extendStay: (bookingId: string, checkOut: string) => Promise<CommandResult>;
+  moveRoom: (bookingId: string, roomNumber: string) => Promise<CommandResult>;
   createGroupReservation: (input: GroupReservationInput) => Promise<CommandResult>;
   updateHousekeepingStatus: (taskId: string, status: HousekeepingTaskRecord["status"]) => Promise<CommandResult>;
   createMaintenanceTicket: (input: MaintenanceInput) => Promise<CommandResult>;
@@ -182,8 +188,14 @@ export function HotelProvider({ children }: { children: ReactNode }) {
     resetHotelData: () => command("resetHotelData"),
     setRoomStatus: (roomId, status) => command("setRoomStatus", { roomId, status }),
     createBooking: (input) => command("createBooking", input),
+    assignBookingRoom: (bookingId, roomNumber) => command("assignBookingRoom", { bookingId, roomNumber }),
+    updateBookingDates: (bookingId, checkIn, checkOut) => command("updateBookingDates", { bookingId, checkIn, checkOut }),
+    cancelBooking: (bookingId, reason) => command("cancelBooking", { bookingId, reason }),
+    markBookingNoShow: (bookingId) => command("markBookingNoShow", { bookingId }),
     checkInBooking: (bookingId, roomNumber) => command("checkInBooking", { bookingId, roomNumber }),
     checkOutBooking: (bookingId) => command("checkOutBooking", { bookingId }),
+    extendStay: (bookingId, checkOut) => command("extendStay", { bookingId, checkOut }),
+    moveRoom: (bookingId, roomNumber) => command("moveRoom", { bookingId, roomNumber }),
     createGroupReservation: (input) => command("createGroupReservation", input),
     updateHousekeepingStatus: (taskId, status) => command("updateHousekeepingStatus", { taskId, status }),
     createMaintenanceTicket: (input) => command("createMaintenanceTicket", input),

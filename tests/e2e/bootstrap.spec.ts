@@ -56,7 +56,7 @@ test("identity lifecycle enforces lockout, reset, MFA, invitations, and sessions
     const invitation = await request.post("/api/auth/invitations", { data: { name: "E2E Reception", email: staffEmail, role: "RECEPTIONIST" } });
     const invitationBody = await invitation.json() as { invitationUrl: string };
     const invitationToken = new URL(invitationBody.invitationUrl).searchParams.get("invite");
-    const staffContext = await apiRequest.newContext({ baseURL: "http://127.0.0.1:3000" });
+    const staffContext = await apiRequest.newContext({ baseURL: process.env.E2E_BASE_URL ?? "http://127.0.0.1:3100" });
     const accepted = await staffContext.post("/api/auth/invitations/accept", { data: { token: invitationToken, password: "StayPilot!Staff2026" } });
     expect(accepted.ok()).toBe(true);
     const staffSessions = await staffContext.get("/api/auth/sessions");
@@ -66,6 +66,59 @@ test("identity lifecycle enforces lockout, reset, MFA, invitations, and sessions
     await db.loginAttempt.deleteMany({ where: { email: { in: [ownerEmail, staffEmail] } } });
     await db.staffInvitation.deleteMany({ where: { email: staffEmail } });
     await db.user.deleteMany({ where: { email: { in: [ownerEmail, staffEmail] } } });
+    await db.$disconnect();
+  }
+});
+
+test("reservation lifecycle prevents conflicts and coordinates room movement", async ({ request }) => {
+  const email = "e2e-pms@staypilot.invalid";
+  const db = getDb();
+  await db.loginAttempt.deleteMany({ where: { email } });
+  await db.user.deleteMany({ where: { email } });
+
+  try {
+    expect((await request.post("/api/auth/bootstrap", { data: { name: "E2E PMS", email, password: "StayPilot!Pms2026" } })).ok()).toBe(true);
+    const initial = await request.get("/api/hotel/state");
+    const initialBody = await initial.json() as { state: { rooms: Array<{ roomNumber: string; roomType: string; status: string }> } };
+    const roomType = initialBody.state.rooms[0].roomType;
+    const matchingRooms = initialBody.state.rooms.filter((room) => room.roomType === roomType && room.status === "AVAILABLE").slice(0, 3);
+    expect(matchingRooms).toHaveLength(3);
+
+    const command = async (action: string, payload: Record<string, unknown> = {}) => {
+      const response = await request.post("/api/hotel/command", { data: { action, payload } });
+      return response.json() as Promise<{ ok: boolean; message: string; state?: { bookings: Array<{ id: string; guestName: string; status: string; roomNumber?: string }>; housekeeping: Array<{ roomNumber: string }> } }>;
+    };
+    const bookingPayload = (guestName: string, checkIn: string, checkOut: string) => ({ guestName, phone: "000", email: `${guestName.toLowerCase().replaceAll(" ", "-")}@staypilot.invalid`, roomType, checkIn, checkOut, source: "DIRECT", specialRequests: "", totalAmount: 500, depositRequired: 100 });
+
+    let result = await command("createBooking", bookingPayload("Conflict One", "2027-08-01", "2027-08-03"));
+    const firstId = result.state!.bookings.find((booking) => booking.guestName === "Conflict One")!.id;
+    result = await command("createBooking", bookingPayload("Conflict Two", "2027-08-02", "2027-08-04"));
+    const secondId = result.state!.bookings.find((booking) => booking.guestName === "Conflict Two")!.id;
+    result = await command("createBooking", bookingPayload("Turnover Guest", "2027-08-03", "2027-08-06"));
+    const turnoverId = result.state!.bookings.find((booking) => booking.guestName === "Turnover Guest")!.id;
+
+    expect((await command("assignBookingRoom", { bookingId: firstId, roomNumber: matchingRooms[0].roomNumber })).ok).toBe(true);
+    expect((await command("assignBookingRoom", { bookingId: secondId, roomNumber: matchingRooms[0].roomNumber })).ok).toBe(false);
+    const protectedRoom = await db.room.findFirstOrThrow({ where: { roomNumber: matchingRooms[0].roomNumber } });
+    await expect(db.booking.update({ where: { id: secondId }, data: { roomId: protectedRoom.id } })).rejects.toThrow();
+    expect((await command("assignBookingRoom", { bookingId: turnoverId, roomNumber: matchingRooms[0].roomNumber })).ok).toBe(true);
+    expect((await command("assignBookingRoom", { bookingId: secondId, roomNumber: matchingRooms[2].roomNumber })).ok).toBe(true);
+
+    expect((await command("checkInBooking", { bookingId: firstId, roomNumber: matchingRooms[0].roomNumber })).ok).toBe(true);
+    expect((await command("extendStay", { bookingId: firstId, checkOut: "2027-08-04" })).ok).toBe(false);
+    expect((await command("moveRoom", { bookingId: firstId, roomNumber: matchingRooms[1].roomNumber })).ok).toBe(true);
+    result = await command("checkOutBooking", { bookingId: firstId });
+    expect(result.ok).toBe(true);
+    expect(result.state!.housekeeping.some((task) => task.roomNumber === matchingRooms[0].roomNumber)).toBe(true);
+    expect(result.state!.housekeeping.some((task) => task.roomNumber === matchingRooms[1].roomNumber)).toBe(true);
+
+    expect((await command("cancelBooking", { bookingId: secondId, reason: "Guest changed plans" })).ok).toBe(true);
+    expect((await command("markBookingNoShow", { bookingId: turnoverId })).ok).toBe(true);
+    expect((await command("resetHotelData")).ok).toBe(true);
+  } finally {
+    await request.post("/api/hotel/command", { data: { action: "resetHotelData", payload: {} } });
+    await db.loginAttempt.deleteMany({ where: { email } });
+    await db.user.deleteMany({ where: { email } });
     await db.$disconnect();
   }
 });

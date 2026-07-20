@@ -85,10 +85,12 @@ export type BookingRecord = {
   checkOut: string;
   paymentStatus: PaymentStatus;
   advancePaid: number;
+  depositRequired?: number;
   totalAmount: number;
   specialRequests: string;
   companyName?: string;
   groupReservationId?: string;
+  cancellationReason?: string;
 };
 
 export type HousekeepingTaskRecord = {
