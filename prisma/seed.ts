@@ -1,3 +1,4 @@
+import "dotenv/config";
 import {
   BlueprintZoneType,
   GatewayStatus,
@@ -9,9 +10,12 @@ import {
   PrismaClient,
   RoomStatus,
   VendorCategory,
-} from "@prisma/client";
+} from "../src/generated/prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
 
-const prisma = new PrismaClient();
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString) throw new Error("DATABASE_URL is required to seed StayPilot.");
+const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
 
 const roomTypes = [
   { name: "Standard Queen", basePrice: 420, capacity: 2, bedType: "Queen", amenities: ["Wi-Fi", "Smart TV", "Work desk"] },

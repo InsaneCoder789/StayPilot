@@ -1,8 +1,9 @@
 import "server-only";
 
 import { randomInt } from "node:crypto";
-import type { Prisma, User } from "@prisma/client";
+import type { Prisma, User } from "@/generated/prisma/client";
 
+import { applyPayment, applyRefund, calculateTax } from "@/domain/finance";
 import { hashPassword } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 
@@ -76,7 +77,7 @@ export async function executeHotelCommand(actor: Actor, action: string, payload:
       if (!guestName || total <= 0 || date(payload.checkOut) <= date(payload.checkIn)) return { ok: false, message: "Complete the guest, dates, and positive room amount." };
       const hotel = await db.hotel.findUniqueOrThrow({ where: { id: actor.hotelId } });
       const names = guestName.split(/\s+/);
-      const tax = Math.round(total * (Number(hotel.taxRate) / 100) * 100) / 100;
+      const tax = calculateTax(total, Number(hotel.taxRate));
       const bookingCode = code("BK");
       const invoiceNumber = code("INV", 4);
       await db.$transaction(async (tx) => {
@@ -195,13 +196,15 @@ export async function executeHotelCommand(actor: Actor, action: string, payload:
       if (!gateway?.enabled || gateway.status !== "READY") return { ok: false, message: `${method.replaceAll("_", " ")} gateway is offline.` };
       const requested = number(payload, "amount");
       if (requested <= 0 || Number(invoice.balanceAmount) <= 0) return { ok: false, message: "Enter a positive amount against an open balance." };
-      const amount = Math.min(requested, Number(invoice.balanceAmount));
+      const paymentState = applyPayment(Number(invoice.totalAmount), Number(invoice.paidAmount), requested);
+      const amount = paymentState.captured;
       const receiptNumber = code("RCT");
       const receipt = await db.$transaction(async (tx) => {
         const payment = await tx.payment.create({ data: { hotelId: actor.hotelId, invoiceId: invoice.id, receiptNumber, guestName: invoice.guestName, amount, method, reference: text(payload, "reference") || `${method}-${randomInt(10_000_000, 99_999_999)}`, processedBy: actor.name } });
-        const paidAmount = Number(invoice.paidAmount) + amount;
-        const balanceAmount = Math.max(Number(invoice.totalAmount) - paidAmount, 0);
-        await tx.invoice.update({ where: { id: invoice.id }, data: { paidAmount, balanceAmount, status: balanceAmount === 0 ? "PAID" : "PARTIAL" } });
+        await tx.invoice.update({
+          where: { id: invoice.id },
+          data: { paidAmount: paymentState.paid, balanceAmount: paymentState.balance, status: paymentState.status },
+        });
         const row = await tx.receipt.create({ data: { hotelId: actor.hotelId, paymentId: payment.id, invoiceId: invoice.id, receiptNumber, invoiceNumber: invoice.invoiceNumber, guestName: invoice.guestName, amount, method } });
         await tx.document.create({ data: { hotelId: actor.hotelId, title: `Receipt ${receiptNumber}`, type: "RECEIPT", linkedRef: invoice.invoiceNumber } });
         await audit(tx, actor, "CAPTURE_PAYMENT", "Payment", payment.id, `${receiptNumber} · AED ${amount.toFixed(2)}`);
@@ -215,9 +218,15 @@ export async function executeHotelCommand(actor: Actor, action: string, payload:
       if (payment.status === "REFUNDED") return { ok: false, message: "Payment has already been refunded." };
       await db.$transaction(async (tx) => {
         await tx.payment.update({ where: { id: payment.id }, data: { status: "REFUNDED", refundedAt: new Date(), refundReference: code("REF") } });
-        const paidAmount = Math.max(Number(payment.invoice.paidAmount) - Number(payment.amount), 0);
-        const balanceAmount = Math.max(Number(payment.invoice.totalAmount) - paidAmount, 0);
-        await tx.invoice.update({ where: { id: payment.invoiceId }, data: { paidAmount, balanceAmount, status: paidAmount === 0 ? "UNPAID" : "PARTIAL" } });
+        const refundState = applyRefund(
+          Number(payment.invoice.totalAmount),
+          Number(payment.invoice.paidAmount),
+          Number(payment.amount),
+        );
+        await tx.invoice.update({
+          where: { id: payment.invoiceId },
+          data: { paidAmount: refundState.paid, balanceAmount: refundState.balance, status: refundState.status },
+        });
         await audit(tx, actor, "REFUND_PAYMENT", "Payment", payment.id, payment.receiptNumber);
       }, { isolationLevel: "Serializable" });
       return { ok: true, message: `${payment.receiptNumber} refunded.` };

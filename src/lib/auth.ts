@@ -1,28 +1,13 @@
 import "server-only";
 
-import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
-import { promisify } from "node:util";
+import { createHash, randomBytes } from "node:crypto";
 import { cookies, headers } from "next/headers";
 
 import { getDb } from "@/lib/db";
+export { hashPassword, verifyPassword } from "@/lib/security/password";
 
-const scrypt = promisify(scryptCallback);
 export const SESSION_COOKIE = "staypilot_session";
 const SESSION_DAYS = 14;
-
-export async function hashPassword(password: string) {
-  const salt = randomBytes(16).toString("hex");
-  const derived = (await scrypt(password, salt, 64)) as Buffer;
-  return `scrypt$${salt}$${derived.toString("hex")}`;
-}
-
-export async function verifyPassword(password: string, storedHash: string) {
-  const [algorithm, salt, expectedHex] = storedHash.split("$");
-  if (algorithm !== "scrypt" || !salt || !expectedHex) return false;
-  const actual = (await scrypt(password, salt, 64)) as Buffer;
-  const expected = Buffer.from(expectedHex, "hex");
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
-}
 
 function tokenHash(token: string) {
   return createHash("sha256").update(token).digest("hex");
