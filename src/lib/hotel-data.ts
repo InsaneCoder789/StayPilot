@@ -473,6 +473,30 @@ export type IntegrationRecord = {
   status: "DISCONNECTED" | "READY" | "CONNECTED";
 };
 
+export type NfcDeviceRecord = {
+  id: string;
+  name: string;
+  deviceCode: string;
+  location: string;
+  provider: string;
+  status: "ONLINE" | "OFFLINE" | "DEGRADED";
+  firmware?: string;
+  lastHeartbeat?: string;
+  pendingCommands: number;
+};
+
+export type IntegrationSyncRecord = {
+  id: string;
+  provider: string;
+  operation: string;
+  direction: "INBOUND" | "OUTBOUND";
+  externalId: string;
+  status: "PENDING" | "SUCCEEDED" | "FAILED" | "IGNORED";
+  error?: string;
+  processedAt?: string;
+  createdAt: string;
+};
+
 export type HotelDetails = {
   hotelName: string;
   location: string;
@@ -524,6 +548,8 @@ export type HotelSnapshot = {
   handovers: ShiftHandoverRecord[];
   nightAudits: NightAuditRecord[];
   integrations: IntegrationRecord[];
+  nfcDevices: NfcDeviceRecord[];
+  integrationSyncs: IntegrationSyncRecord[];
 };
 
 const roomTypes = [
@@ -713,6 +739,8 @@ export const initialHotelSnapshot: HotelSnapshot = {
     { id: "int-5", name: "NFC Door Locks", type: "NFC_LOCK", enabled: false, status: "DISCONNECTED" },
     { id: "int-6", name: "QuickBooks Export", type: "ACCOUNTING", enabled: false, status: "READY" },
   ],
+  nfcDevices: [],
+  integrationSyncs: [],
 };
 
 export function getRoomStatusCounts(rooms: RoomRecord[]) {

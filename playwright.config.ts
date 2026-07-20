@@ -17,6 +17,11 @@ export default defineConfig({
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
     command: "npm run dev -- -p 3100",
+    env: {
+      ...process.env,
+      OTA_WEBHOOK_SECRET: process.env.OTA_WEBHOOK_SECRET ?? "e2e-ota-shared-secret",
+      POS_WEBHOOK_SECRET: process.env.POS_WEBHOOK_SECRET ?? "e2e-pos-shared-secret",
+    },
     url: `${baseURL}/api/health`,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

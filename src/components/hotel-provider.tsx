@@ -89,6 +89,7 @@ type HotelContextType = {
   issueRoomCard: (payload: RoomCardInput) => Promise<CommandResult>;
   updateRoomCardStatus: (cardId: string, status: RoomCardRecord["status"]) => Promise<CommandResult>;
   recordNfcEvent: (cardId: string, event: NfcAccessEventRecord["event"], location?: string) => Promise<CommandResult>;
+  registerNfcDevice: (input: { name: string; deviceCode: string; location: string; provider?: string }) => Promise<CommandResult>;
   addBlueprintZone: (input: BlueprintZoneInput) => Promise<CommandResult>;
   removeBlueprintZone: (blueprintId: string, zoneId: string) => Promise<CommandResult>;
   addDocument: (document: Pick<DocumentRecord, "title" | "type" | "linkedRef">) => Promise<CommandResult>;
@@ -240,6 +241,7 @@ export function HotelProvider({ children }: { children: ReactNode }) {
     issueRoomCard: (input) => command("issueRoomCard", input),
     updateRoomCardStatus: (cardId, status) => command("updateRoomCardStatus", { cardId, status }),
     recordNfcEvent: (cardId, event, location) => command("recordNfcEvent", { cardId, event, location }),
+    registerNfcDevice: (input) => command("registerNfcDevice", input),
     addBlueprintZone: (input) => command("addBlueprintZone", input),
     removeBlueprintZone: (blueprintId, zoneId) => command("removeBlueprintZone", { blueprintId, zoneId }),
     addDocument: (document) => command("addDocument", document),

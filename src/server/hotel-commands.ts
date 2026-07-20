@@ -8,12 +8,14 @@ import { passwordPolicyError } from "@/domain/password-policy";
 import { normalizeBusinessDate, stayNights } from "@/domain/reservations";
 import { hashPassword } from "@/lib/auth";
 import { getDb } from "@/lib/db";
+import { encryptSecret } from "@/lib/security/cipher";
+import { createOpaqueToken, hashToken } from "@/lib/security/tokens";
 import { nextDocumentCode } from "@/server/document-sequence";
 import { captureInvoicePayment } from "@/server/payment-service";
 
 type Actor = Pick<User, "id" | "hotelId" | "name" | "role">;
 type Payload = Record<string, unknown>;
-type Result = { ok: boolean; message: string; invoiceId?: string; receiptId?: string; logout?: boolean };
+type Result = { ok: boolean; message: string; invoiceId?: string; receiptId?: string; secret?: string; logout?: boolean };
 
 const roleCommands: Record<User["role"], string[] | "*"> = {
   HOTEL_ADMIN: "*",
@@ -496,21 +498,41 @@ export async function executeHotelCommand(actor: Actor, action: string, payload:
       await db.document.create({ data: { hotelId: actor.hotelId, title: policy.title, type: "POLICY", linkedRef: policy.category } });
       return { ok: true, message: "Policy added." };
     }
+    case "registerNfcDevice": {
+      if (!["HOTEL_ADMIN", "MANAGER"].includes(actor.role)) return { ok: false, message: "Manager access is required to register hardware." };
+      if (!text(payload, "name") || !text(payload, "deviceCode") || !text(payload, "location")) return { ok: false, message: "Device name, code, and location are required." };
+      const credentials = createOpaqueToken();
+      const device = await db.nfcDevice.create({ data: { hotelId: actor.hotelId, name: text(payload, "name"), deviceCode: text(payload, "deviceCode").toUpperCase(), location: text(payload, "location"), provider: text(payload, "provider") || "STAYPILOT_BRIDGE", secretHash: credentials.tokenHash } });
+      await db.auditLog.create({ data: { hotelId: actor.hotelId, userId: actor.id, actorName: actor.name, action: "REGISTER_NFC_DEVICE", entityType: "NfcDevice", entityId: device.id, target: device.deviceCode } });
+      return { ok: true, message: "NFC bridge registered. Store the one-time device token now.", secret: credentials.token };
+    }
     case "issueRoomCard": {
       const room = await db.room.findFirst({ where: { hotelId: actor.hotelId, roomNumber: text(payload, "roomNumber") } });
       if (!room) return { ok: false, message: "Room not found." };
-      await db.$transaction(async (tx) => {
-        const card = await tx.roomCard.create({ data: { hotelId: actor.hotelId, roomId: room.id, guestName: text(payload, "guestName") || null, accessType: text(payload, "accessType") as "NFC" | "MAGSTRIPE" | "RFID", status: "ACTIVE", issuedAt: new Date() } });
-        await tx.nfcAccessEvent.create({ data: { hotelId: actor.hotelId, cardId: card.id, event: "ENCODED", location: "Front desk encoder" } });
+      const accessType = text(payload, "accessType") as "NFC" | "MAGSTRIPE" | "RFID";
+      const device = accessType === "NFC" ? await db.nfcDevice.findFirst({ where: { hotelId: actor.hotelId }, orderBy: [{ status: "asc" }, { lastHeartbeat: "desc" }] }) : null;
+      const activeBooking = await db.booking.findFirst({ where: { hotelId: actor.hotelId, roomId: room.id, status: "CHECKED_IN" } });
+      const credential = createOpaqueToken();
+      const card = await db.$transaction(async (tx) => {
+        const row = await tx.roomCard.create({ data: { hotelId: actor.hotelId, roomId: room.id, bookingId: activeBooking?.id, guestName: text(payload, "guestName") || activeBooking?.guestName || null, accessType, status: accessType === "NFC" ? "READY" : "ACTIVE", credentialHash: hashToken(credential.token), issuedAt: accessType === "NFC" ? null : new Date(), expiresAt: activeBooking?.checkOutAt } });
+        if (accessType === "NFC" && device) await tx.nfcCommand.create({ data: { hotelId: actor.hotelId, deviceId: device.id, roomCardId: row.id, command: "ENCODE_CREDENTIAL", payloadCiphertext: encryptSecret(JSON.stringify({ credential: credential.token, roomNumber: room.roomNumber, validFrom: new Date().toISOString(), validUntil: activeBooking?.checkOutAt.toISOString() ?? null })), createdBy: actor.name } });
         await tx.document.create({ data: { hotelId: actor.hotelId, title: `Room card ${room.roomNumber}`, type: "ROOM_CARD_LOG", linkedRef: room.roomNumber } });
-        await audit(tx, actor, "ISSUE_ROOM_CARD", "RoomCard", card.id, room.roomNumber);
+        await audit(tx, actor, "ISSUE_ROOM_CARD", "RoomCard", row.id, room.roomNumber);
+        return row;
       });
-      return { ok: true, message: `Room ${room.roomNumber} card issued.` };
+      return { ok: true, message: accessType === "NFC" ? device ? `Room ${room.roomNumber} credential queued for hardware encoding.` : `Room ${room.roomNumber} credential prepared; register an NFC bridge to encode it.` : `Room ${room.roomNumber} card ${card.status.toLowerCase()}.` };
     }
     case "updateRoomCardStatus": {
       const card = await db.roomCard.findFirst({ where: { id: text(payload, "cardId"), hotelId: actor.hotelId }, include: { room: true } });
       if (!card) return { ok: false, message: "Room card not found." };
       const status = text(payload, "status") as "READY" | "ENCODED" | "ACTIVE" | "EXPIRED";
+      if (card.accessType === "NFC" && status !== "EXPIRED") return { ok: false, message: "NFC state is confirmed by the registered hardware bridge." };
+      if (card.accessType === "NFC" && status === "EXPIRED") {
+        const device = await db.nfcDevice.findFirst({ where: { hotelId: actor.hotelId }, orderBy: { lastHeartbeat: "desc" } });
+        if (!device) return { ok: false, message: "Register an NFC bridge before revoking this credential." };
+        await db.nfcCommand.create({ data: { hotelId: actor.hotelId, deviceId: device.id, roomCardId: card.id, command: "REVOKE_CREDENTIAL", payloadCiphertext: encryptSecret(JSON.stringify({ credentialHash: card.credentialHash, roomNumber: card.room.roomNumber })), createdBy: actor.name } });
+        return { ok: true, message: "Credential revocation queued for the NFC bridge." };
+      }
       await db.$transaction(async (tx) => {
         await tx.roomCard.update({ where: { id: card.id }, data: { status, revokedAt: status === "EXPIRED" ? new Date() : null } });
         if (status === "EXPIRED") await tx.nfcAccessEvent.create({ data: { hotelId: actor.hotelId, cardId: card.id, event: "EXPIRED", location: "Access control console" } });
@@ -722,13 +744,29 @@ export async function executeHotelCommand(actor: Actor, action: string, payload:
     case "toggleIntegration": {
       const integration = await db.integration.findFirst({ where: { id: text(payload, "integrationId"), hotelId: actor.hotelId } });
       if (!integration) return { ok: false, message: "Integration not found." };
-      await db.integration.update({ where: { id: integration.id }, data: { enabled: !integration.enabled, status: integration.enabled ? "READY" : "CONNECTED" } });
-      return { ok: true, message: "Integration updated." };
+      if (integration.enabled) {
+        await db.integration.update({ where: { id: integration.id }, data: { enabled: false, status: "READY" } });
+        return { ok: true, message: `${integration.name} disabled.` };
+      }
+      const configured = integration.type === "PAYMENT" ? Boolean(process.env.STRIPE_SECRET_KEY && process.env.STRIPE_WEBHOOK_SECRET)
+        : integration.type === "EMAIL" ? Boolean(process.env.RESEND_API_KEY && process.env.RESEND_WEBHOOK_SECRET)
+          : integration.type === "WHATSAPP" ? Boolean(process.env.WHATSAPP_ACCESS_TOKEN)
+            : integration.type === "OTA" ? Boolean(process.env.OTA_WEBHOOK_SECRET)
+              : integration.type === "NFC_LOCK" ? await db.nfcDevice.count({ where: { hotelId: actor.hotelId } }) > 0
+                : integration.type === "ACCOUNTING";
+      if (!configured) {
+        await db.integration.update({ where: { id: integration.id }, data: { enabled: false, status: "DISCONNECTED", lastError: "Required credentials or registered hardware are missing." } });
+        return { ok: false, message: `${integration.name} is not configured. Add credentials or hardware before enabling it.` };
+      }
+      await db.integration.update({ where: { id: integration.id }, data: { enabled: true, status: "CONNECTED", lastError: null } });
+      return { ok: true, message: `${integration.name} connected.` };
     }
     case "resetHotelData": {
       if (actor.role !== "HOTEL_ADMIN") return { ok: false, message: "Only the hotel administrator can reset operational data." };
       await db.$transaction(async (tx) => {
         await tx.communication.deleteMany({ where: { hotelId: actor.hotelId } });
+        await tx.integrationSyncLog.deleteMany({ where: { hotelId: actor.hotelId } });
+        await tx.nfcCommand.deleteMany({ where: { hotelId: actor.hotelId } });
         await tx.inventoryMovement.deleteMany({ where: { hotelId: actor.hotelId } });
         await tx.purchaseOrder.deleteMany({ where: { hotelId: actor.hotelId } });
         await tx.operationalTask.deleteMany({ where: { hotelId: actor.hotelId } });

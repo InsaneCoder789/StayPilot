@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { generate } from "otplib";
 import { expect, request as apiRequest, test } from "@playwright/test";
 
@@ -282,6 +283,76 @@ test("document lifecycle persists originals, generates PDFs, templates messages,
     const reset = await request.post("/api/hotel/command", { data: { action: "resetHotelData", payload: {} } });
     expect(reset.ok()).toBe(true);
     await db.documentTemplate.deleteMany({ where: { name: templateName } });
+    await db.loginAttempt.deleteMany({ where: { email } });
+    await db.user.deleteMany({ where: { email } });
+    await db.$disconnect();
+  }
+});
+
+test("integration bridge authenticates NFC hardware and idempotent OTA, POS, and accounting flows", async ({ request }) => {
+  const email = "e2e-integrations@staypilot.invalid";
+  const deviceCode = "E2E-NFC-001";
+  const db = getDb();
+  await db.loginAttempt.deleteMany({ where: { email } });
+  await db.nfcDevice.deleteMany({ where: { deviceCode } });
+  await db.user.deleteMany({ where: { email } });
+  const sign = (body: string, secret: string) => createHmac("sha256", secret).update(body).digest("hex");
+
+  try {
+    expect((await request.post("/api/auth/bootstrap", { data: { name: "E2E Integrations", email, password: "StayPilot!Integrations2026" } })).ok()).toBe(true);
+    const hotel = await db.hotel.findFirstOrThrow({ orderBy: { createdAt: "asc" } });
+    const command = async (action: string, payload: Record<string, unknown> = {}) => {
+      const response = await request.post("/api/hotel/command", { data: { action, payload } });
+      return response.json() as Promise<{ ok: boolean; message: string; secret?: string; state?: {
+        rooms: Array<{ roomNumber: string; roomType: string }>;
+        roomCards: Array<{ id: string; status: string }>;
+        nfcEvents: Array<{ event: string }>;
+        bookings: Array<{ source: string }>;
+        invoices: Array<{ invoiceNumber: string; totalAmount: number; balanceAmount: number }>;
+        integrationSyncs: Array<{ provider: string; operation: string; status: string }>;
+      } }>;
+    };
+
+    let result = await command("registerNfcDevice", { name: "E2E Front Desk Bridge", deviceCode, location: "E2E encoder" });
+    expect(result.secret).toBeTruthy();
+    const token = result.secret!;
+    const room = result.state!.rooms[0];
+    result = await command("issueRoomCard", { roomNumber: room.roomNumber, guestName: "Bridge Guest", accessType: "NFC" });
+    expect(result.state!.roomCards[0].status).toBe("READY");
+    const cardId = result.state!.roomCards[0].id;
+
+    const poll = await request.post("/api/device/nfc/poll", { headers: { Authorization: `Bearer ${token}` }, data: { firmware: "e2e-1.0" } });
+    const polled = await poll.json() as { command: { id: string; type: string; payload: { roomNumber: string; credential: string } } };
+    expect(polled.command.type).toBe("ENCODE_CREDENTIAL");
+    expect(polled.command.payload).toMatchObject({ roomNumber: room.roomNumber });
+    expect(polled.command.payload.credential).toBeTruthy();
+    expect((await request.post("/api/device/nfc/result", { headers: { Authorization: `Bearer ${token}` }, data: { commandId: polled.command.id, success: true } })).ok()).toBe(true);
+    expect((await request.post("/api/device/nfc/events", { headers: { Authorization: `Bearer ${token}` }, data: { events: [{ cardId, event: "ACCESS_GRANTED", location: `Room ${room.roomNumber} door` }] } })).ok()).toBe(true);
+    result = await command("markNotificationRead", { notificationId: "missing" });
+    expect(result.state!.roomCards[0].status).toBe("ACTIVE");
+    expect(result.state!.nfcEvents.some((event) => event.event === "ACCESS_GRANTED")).toBe(true);
+
+    const otaPayload = JSON.stringify({ hotelId: hotel.id, externalReservationId: "OTA-E2E-1001", event: "CREATED", guest: { firstName: "Channel", lastName: "Guest", email: "channel@staypilot.invalid", phone: "000" }, roomType: room.roomType, checkIn: "2027-09-10T12:00:00.000Z", checkOut: "2027-09-12T12:00:00.000Z", totalAmount: 400, specialRequests: "High floor" });
+    const otaHeaders = { "Content-Type": "application/json", "x-staypilot-signature": sign(otaPayload, "e2e-ota-shared-secret"), "x-staypilot-provider": "E2E_OTA", "x-staypilot-event-id": "evt-ota-e2e-1" };
+    expect((await request.post("/api/integrations/ota/reservations", { headers: otaHeaders, data: otaPayload })).ok()).toBe(true);
+    const duplicate = await request.post("/api/integrations/ota/reservations", { headers: otaHeaders, data: otaPayload });
+    await expect(duplicate.json()).resolves.toMatchObject({ ok: true, duplicate: true });
+
+    const stateAfterOta = await request.get("/api/hotel/state");
+    const otaState = (await stateAfterOta.json() as { state: { invoices: Array<{ invoiceNumber: string }> } }).state;
+    const invoiceNumber = otaState.invoices[0].invoiceNumber;
+    const posPayload = JSON.stringify({ hotelId: hotel.id, externalId: "POS-E2E-001", invoiceNumber, outlet: "ROOM_SERVICE", charges: [{ label: "Club sandwich", quantity: 1, amount: 35 }] });
+    const posHeaders = { "Content-Type": "application/json", "x-staypilot-signature": sign(posPayload, "e2e-pos-shared-secret"), "x-staypilot-provider": "E2E_POS" };
+    expect((await request.post("/api/integrations/pos/folio", { headers: posHeaders, data: posPayload })).ok()).toBe(true);
+    const posDuplicate = await request.post("/api/integrations/pos/folio", { headers: posHeaders, data: posPayload });
+    await expect(posDuplicate.json()).resolves.toMatchObject({ duplicate: true });
+
+    const exportResponse = await request.get("/api/integrations/accounting/export");
+    expect(exportResponse.ok()).toBe(true);
+    expect(await exportResponse.text()).toContain(invoiceNumber);
+  } finally {
+    await request.post("/api/hotel/command", { data: { action: "resetHotelData", payload: {} } });
+    await db.nfcDevice.deleteMany({ where: { deviceCode } });
     await db.loginAttempt.deleteMany({ where: { email } });
     await db.user.deleteMany({ where: { email } });
     await db.$disconnect();

@@ -137,6 +137,32 @@ enum CommunicationStatus {
   FAILED
 }
 
+enum NfcDeviceStatus {
+  ONLINE
+  OFFLINE
+  DEGRADED
+}
+
+enum NfcCommandStatus {
+  QUEUED
+  CLAIMED
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+enum IntegrationSyncDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum IntegrationSyncStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  IGNORED
+}
+
 enum InvoiceStatus {
   UNPAID
   PARTIAL
@@ -267,30 +293,30 @@ enum RagDocumentStatus {
 }
 
 model Hotel {
-  id                 String              @id @default(cuid())
+  id                 String               @id @default(cuid())
   name               String
   legalName          String
-  propertyCode       String              @unique
+  propertyCode       String               @unique
   addressLine1       String
   addressLine2       String?
   city               String
   state              String
   postalCode         String?
   country            String
-  currency           String              @default("AED")
+  currency           String               @default("AED")
   phone              String
   email              String
   taxRegistrationNo  String?
-  taxRate            Decimal             @default(0) @db.Decimal(5, 2)
+  taxRate            Decimal              @default(0) @db.Decimal(5, 2)
   checkInTime        String
   checkOutTime       String
   timezone           String
-  themeMode          String              @default("dark")
-  themeAccent        String              @default("#8eb69b")
-  themeSurface       String              @default("#13191d")
-  themeSurfaceStrong String              @default("#1a2329")
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
+  themeMode          String               @default("dark")
+  themeAccent        String               @default("#8eb69b")
+  themeSurface       String               @default("#13191d")
+  themeSurfaceStrong String               @default("#1a2329")
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
   users              User[]
   sessions           Session[]
   staffInvitations   StaffInvitation[]
@@ -336,6 +362,9 @@ model Hotel {
   lostFoundItems     LostFoundItem[]
   documentTemplates  DocumentTemplate[]
   communications     Communication[]
+  nfcDevices         NfcDevice[]
+  nfcCommands        NfcCommand[]
+  integrationSyncs   IntegrationSyncLog[]
 }
 
 model DocumentSequence {
@@ -954,6 +983,7 @@ model RoomCard {
   room           Room             @relation(fields: [roomId], references: [id], onDelete: Cascade)
   booking        Booking?         @relation(fields: [bookingId], references: [id], onDelete: SetNull)
   events         NfcAccessEvent[]
+  commands       NfcCommand[]
 
   @@index([hotelId, status])
   @@index([hotelId, roomId])
@@ -972,6 +1002,71 @@ model NfcAccessEvent {
 
   @@index([hotelId, occurredAt])
   @@index([cardId, occurredAt])
+}
+
+model NfcDevice {
+  id            String          @id @default(cuid())
+  hotelId       String
+  name          String
+  deviceCode    String
+  location      String
+  provider      String          @default("STAYPILOT_BRIDGE")
+  status        NfcDeviceStatus @default(OFFLINE)
+  secretHash    String          @unique
+  firmware      String?
+  lastHeartbeat DateTime?
+  lastError     String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  hotel         Hotel           @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  commands      NfcCommand[]
+
+  @@unique([hotelId, deviceCode])
+  @@index([hotelId, status, lastHeartbeat])
+}
+
+model NfcCommand {
+  id                String           @id @default(cuid())
+  hotelId           String
+  deviceId          String
+  roomCardId        String?
+  command           String
+  status            NfcCommandStatus @default(QUEUED)
+  payloadCiphertext String
+  attempts          Int              @default(0)
+  claimedAt         DateTime?
+  completedAt       DateTime?
+  error             String?
+  createdBy         String
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  hotel             Hotel            @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  device            NfcDevice        @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  roomCard          RoomCard?        @relation(fields: [roomCardId], references: [id], onDelete: SetNull)
+
+  @@index([deviceId, status, createdAt])
+  @@index([hotelId, status, createdAt])
+}
+
+model IntegrationSyncLog {
+  id          String                   @id @default(cuid())
+  hotelId     String
+  provider    String
+  operation   String
+  direction   IntegrationSyncDirection
+  externalId  String
+  status      IntegrationSyncStatus    @default(PENDING)
+  payload     Json?
+  result      Json?
+  error       String?
+  processedAt DateTime?
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+  hotel       Hotel                    @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, operation, externalId])
+  @@index([hotelId, status, createdAt])
+  @@index([hotelId, provider, createdAt])
 }
 
 model Blueprint {

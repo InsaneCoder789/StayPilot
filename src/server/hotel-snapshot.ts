@@ -60,6 +60,8 @@ export async function getHotelSnapshot(hotelId: string): Promise<HotelSnapshot> 
       handovers: { orderBy: { createdAt: "desc" }, take: 500 },
       nightAudits: { orderBy: { businessDate: "desc" }, take: 365 },
       integrations: { orderBy: { createdAt: "asc" } },
+      nfcDevices: { include: { _count: { select: { commands: { where: { status: { in: ["QUEUED", "CLAIMED"] } } } } } }, orderBy: { createdAt: "asc" } },
+      integrationSyncs: { orderBy: { createdAt: "desc" }, take: 500 },
     },
   });
   if (!hotel) throw new Error("HOTEL_NOT_FOUND");
@@ -275,5 +277,7 @@ export async function getHotelSnapshot(hotelId: string): Promise<HotelSnapshot> 
     handovers: hotel.handovers.map((handover) => ({ id: handover.id, department: handover.department, note: handover.note, author: handover.author, createdAt: stamp(handover.createdAt) })),
     nightAudits: hotel.nightAudits.map((audit) => ({ id: audit.id, businessDate: dateOnly(audit.businessDate), status: audit.status, summary: audit.summary, createdAt: stamp(audit.createdAt) })),
     integrations: hotel.integrations.map((integration) => ({ id: integration.id, name: integration.name, type: integration.type, enabled: integration.enabled, status: integration.status })),
+    nfcDevices: hotel.nfcDevices.map((device) => ({ id: device.id, name: device.name, deviceCode: device.deviceCode, location: device.location, provider: device.provider, status: device.lastHeartbeat && device.lastHeartbeat > new Date(Date.now() - 120_000) ? device.status : "OFFLINE", firmware: device.firmware ?? undefined, lastHeartbeat: device.lastHeartbeat ? stamp(device.lastHeartbeat) : undefined, pendingCommands: device._count.commands })),
+    integrationSyncs: hotel.integrationSyncs.map((sync) => ({ id: sync.id, provider: sync.provider, operation: sync.operation, direction: sync.direction, externalId: sync.externalId, status: sync.status, error: sync.error ?? undefined, processedAt: sync.processedAt ? stamp(sync.processedAt) : undefined, createdAt: stamp(sync.createdAt) })),
   };
 }
