@@ -193,6 +193,8 @@ export type AuthUserRecord = {
   password?: string;
   role: StaffRole;
   active: boolean;
+  status?: "ACTIVE" | "INVITED" | "DISABLED";
+  mfaEnabled?: boolean;
 };
 
 export type RoomCardRecord = {

@@ -15,6 +15,8 @@ export async function GET() {
           email: session.user.email,
           role: session.user.role,
           active: session.user.status === "ACTIVE",
+          status: session.user.status,
+          mfaEnabled: session.user.mfaEnabled,
         }
       : null,
   });

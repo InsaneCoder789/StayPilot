@@ -1,18 +1,21 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { passwordPolicyError } from "@/domain/password-policy";
 import { createSession, hashPassword } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 
 const schema = z.object({
   name: z.string().trim().min(2).max(120),
   email: z.string().trim().email().max(254),
-  password: z.string().min(8).max(200),
+  password: z.string().max(200),
 });
 
 export async function POST(request: Request) {
   const parsed = schema.safeParse(await request.json());
   if (!parsed.success) return NextResponse.json({ ok: false, message: "Enter a valid name, email, and password." }, { status: 400 });
+  const policyError = passwordPolicyError(parsed.data.password);
+  if (policyError) return NextResponse.json({ ok: false, message: policyError }, { status: 400 });
   const db = getDb();
   if ((await db.user.count()) > 0) {
     return NextResponse.json({ ok: false, message: "Owner account already exists." }, { status: 409 });

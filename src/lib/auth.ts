@@ -1,30 +1,28 @@
 import "server-only";
 
-import { createHash, randomBytes } from "node:crypto";
 import { cookies, headers } from "next/headers";
 
 import { getDb } from "@/lib/db";
+import { createOpaqueToken, hashToken } from "@/lib/security/tokens";
 export { hashPassword, verifyPassword } from "@/lib/security/password";
 
 export const SESSION_COOKIE = "staypilot_session";
 const SESSION_DAYS = 14;
 
-function tokenHash(token: string) {
-  return createHash("sha256").update(token).digest("hex");
-}
-
 export async function createSession(userId: string, hotelId: string) {
   const db = getDb();
-  const token = randomBytes(32).toString("base64url");
+  const { token, tokenHash } = createOpaqueToken();
   const requestHeaders = await headers();
+  const userAgent = requestHeaders.get("user-agent")?.slice(0, 500);
   const expiresAt = new Date(Date.now() + SESSION_DAYS * 86_400_000);
   await db.session.create({
     data: {
       userId,
       hotelId,
-      tokenHash: tokenHash(token),
+      tokenHash,
       expiresAt,
-      userAgent: requestHeaders.get("user-agent")?.slice(0, 500),
+      userAgent,
+      deviceName: userAgent?.includes("Mobile") ? "Mobile browser" : "Desktop browser",
       ipAddress: requestHeaders.get("x-forwarded-for")?.split(",")[0]?.trim(),
     },
   });
@@ -43,7 +41,7 @@ export async function getSession() {
   if (!token) return null;
   const db = getDb();
   const session = await db.session.findUnique({
-    where: { tokenHash: tokenHash(token) },
+    where: { tokenHash: hashToken(token) },
     include: { user: true, hotel: true },
   });
   if (
@@ -54,6 +52,7 @@ export async function getSession() {
   ) {
     return null;
   }
+  await db.session.update({ where: { id: session.id }, data: { lastSeenAt: new Date() } });
   return session;
 }
 
@@ -68,7 +67,7 @@ export async function revokeSession() {
   const token = cookieStore.get(SESSION_COOKIE)?.value;
   if (token) {
     await getDb().session.updateMany({
-      where: { tokenHash: tokenHash(token), revokedAt: null },
+      where: { tokenHash: hashToken(token), revokedAt: null },
       data: { revokedAt: new Date() },
     });
   }

@@ -14,7 +14,12 @@ export default function SettingsPage() {
     updateHotelSettings,
     addPolicy,
     resetHotelData,
-    createUser,
+    createInvitation,
+    setUserStatus,
+    revokeUserSessions,
+    setupMfa,
+    enableMfa,
+    disableMfa,
     logout,
   } = useHotel();
   const [hotel, setHotel] = useState(state.hotel);
@@ -26,10 +31,14 @@ export default function SettingsPage() {
   const [userForm, setUserForm] = useState({
     name: "",
     email: "",
-    password: "",
     role: "RECEPTIONIST" as StaffRole,
   });
   const [userMessage, setUserMessage] = useState("");
+  const [invitationUrl, setInvitationUrl] = useState("");
+  const [mfaSecret, setMfaSecret] = useState("");
+  const [mfaCode, setMfaCode] = useState("");
+  const [securityPassword, setSecurityPassword] = useState("");
+  const [securityMessage, setSecurityMessage] = useState("");
 
   return (
     <AppShell
@@ -238,15 +247,6 @@ export default function SettingsPage() {
               placeholder="Email"
               className="suite-input"
             />
-            <input
-              type="password"
-              value={userForm.password}
-              onChange={(event) =>
-                setUserForm((current) => ({ ...current, password: event.target.value }))
-              }
-              placeholder="Password"
-              className="suite-input"
-            />
             <CustomSelect
               value={userForm.role}
               onChange={(value) =>
@@ -264,23 +264,29 @@ export default function SettingsPage() {
           </div>
           <button
             onClick={async () => {
-              const result = await createUser(userForm);
+              const result = await createInvitation(userForm);
               setUserMessage(result.message);
+              setInvitationUrl(result.invitationUrl ?? "");
               if (result.ok) {
                 setUserForm({
                   name: "",
                   email: "",
-                  password: "",
                   role: "RECEPTIONIST",
                 });
               }
             }}
             className="suite-button suite-button-primary mt-4"
           >
-            Add authorized user
+            Create staff invitation
           </button>
           {userMessage ? (
             <p className="mt-3 text-sm text-[var(--muted)]">{userMessage}</p>
+          ) : null}
+          {invitationUrl ? (
+            <div className="suite-subcard mt-3 p-4">
+              <p className="text-xs uppercase tracking-[0.18em] text-[var(--muted)]">Secure invitation link</p>
+              <p className="mt-2 break-all font-mono text-xs text-[var(--ink-soft)]">{invitationUrl}</p>
+            </div>
           ) : null}
         </section>
 
@@ -291,15 +297,33 @@ export default function SettingsPage() {
           <div className="mt-4 space-y-3">
             {state.users.map((user) => (
               <div key={user.id} className="suite-subcard px-4 py-4">
-                <p className="font-medium">{user.name}</p>
-                <p className="mt-2 text-sm text-[var(--muted)]">
-                  {user.email} • {user.role.replaceAll("_", " ")}
-                </p>
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div><p className="font-medium">{user.name}</p><p className="mt-2 text-sm text-[var(--muted)]">{user.email} • {user.role.replaceAll("_", " ")} • {user.status ?? (user.active ? "ACTIVE" : "DISABLED")}{user.mfaEnabled ? " • MFA" : ""}</p></div>
+                  <div className="flex flex-wrap gap-2">
+                    <button className="suite-button" onClick={async () => setUserMessage((await revokeUserSessions(user.id)).message)}>Revoke sessions</button>
+                    {user.id !== currentUser?.id ? <button className="suite-button" onClick={async () => setUserMessage((await setUserStatus(user.id, user.active ? "DISABLED" : "ACTIVE")).message)}>{user.active ? "Disable" : "Enable"}</button> : null}
+                  </div>
+                </div>
               </div>
             ))}
           </div>
         </section>
       </div>
+
+      <section className="suite-card mt-4 p-6">
+        <h3 className="text-2xl font-semibold tracking-[-0.03em]">Account security</h3>
+        <p className="mt-2 text-sm text-[var(--muted)]">Protect your account with a time-based authenticator. Enabling MFA revokes every other active session.</p>
+        {!currentUser?.mfaEnabled ? (
+          <div className="mt-4 grid gap-3 md:grid-cols-[1fr_12rem_auto]">
+            <div className="suite-subcard p-4"><p className="text-xs text-[var(--muted)]">Authenticator secret</p><p className="mt-2 break-all font-mono text-sm">{mfaSecret || "Start setup to generate a secret."}</p></div>
+            <input className="suite-input" inputMode="numeric" maxLength={6} value={mfaCode} onChange={(event) => setMfaCode(event.target.value.replace(/\D/g, ""))} placeholder="000000" />
+            <div className="flex gap-2"><button className="suite-button" onClick={async () => { const result = await setupMfa(); setMfaSecret(result.secret ?? ""); setSecurityMessage(result.message); }}>Start MFA</button><button className="suite-button suite-button-primary" disabled={!mfaSecret || mfaCode.length !== 6} onClick={async () => setSecurityMessage((await enableMfa(mfaCode)).message)}>Enable</button></div>
+          </div>
+        ) : (
+          <div className="mt-4 flex flex-col gap-3 md:flex-row"><input className="suite-input flex-1" type="password" value={securityPassword} onChange={(event) => setSecurityPassword(event.target.value)} placeholder="Confirm current password" /><button className="suite-button" onClick={async () => setSecurityMessage((await disableMfa(securityPassword)).message)}>Disable MFA</button></div>
+        )}
+        {securityMessage ? <p className="mt-3 text-sm text-[var(--muted)]">{securityMessage}</p> : null}
+      </section>
 
       <div className="mt-4 grid gap-4 2xl:grid-cols-[0.95fr_1.05fr]">
         <section className="suite-card p-6">

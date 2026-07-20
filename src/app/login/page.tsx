@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 import { CustomSelect } from "@/components/custom-select";
 import { useHotel } from "@/components/hotel-provider";
@@ -11,12 +12,24 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 export default function LoginPage() {
-  const { state, hasUsers, login, bootstrapOwner } = useHotel();
-  const [mode, setMode] = useState<"login" | "setup">(
-    hasUsers ? "login" : "setup",
+  return <Suspense fallback={null}><LoginContent /></Suspense>;
+}
+
+function LoginContent() {
+  const { state, hasUsers, login, bootstrapOwner, requestPasswordReset, resetPassword, acceptInvitation } = useHotel();
+  const searchParams = useSearchParams();
+  const invitationToken = searchParams.get("invite") ?? "";
+  const resetToken = searchParams.get("reset") ?? "";
+  const [mode, setMode] = useState<"login" | "setup" | "request" | "reset" | "invite">(
+    invitationToken ? "invite" : resetToken ? "reset" : hasUsers ? "login" : "setup",
   );
   const [message, setMessage] = useState("");
   const [loginForm, setLoginForm] = useState({ email: "", password: "" });
+  const [otp, setOtp] = useState("");
+  const [requiresMfa, setRequiresMfa] = useState(false);
+  const accessToken = invitationToken || resetToken;
+  const [recoveryEmail, setRecoveryEmail] = useState("");
+  const [newPassword, setNewPassword] = useState("");
   const [setupForm, setSetupForm] = useState({
     name: "",
     email: "",
@@ -75,24 +88,30 @@ export default function LoginPage() {
               Secure access
             </p>
             <h2 className="mt-4 text-4xl font-semibold tracking-[-0.06em]">
-              {mode === "login" ? "Welcome back." : "Create the owner."}
+              {mode === "login" ? "Welcome back." : mode === "setup" ? "Create the owner." : mode === "invite" ? "Join the hotel." : mode === "reset" ? "Set a new password." : "Recover access."}
             </h2>
             <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
               {mode === "login"
                 ? "Use your authorized property account to enter operations."
-                : "The first account controls users, roles, finance, and property configuration."}
+                : mode === "setup"
+                  ? "The first account controls users, roles, finance, and property configuration."
+                  : mode === "invite"
+                    ? "Activate your staff invitation with a secure password."
+                    : mode === "reset"
+                      ? "Choose a new password to revoke old sessions and restore access."
+                      : "Request a one-time password reset for an active account."}
             </p>
 
             <div className="mt-8">
               <CustomSelect
                 value={mode}
-                onChange={(value) => setMode(value as "login" | "setup")}
+                onChange={(value) => setMode(value as "login" | "setup" | "request")}
                 options={
                   !hasUsers
                     ? [{ value: "setup", label: "Create owner account" }]
                     : [
                         { value: "login", label: "Sign in" },
-                        { value: "setup", label: "Owner setup" },
+                        { value: "request", label: "Recover password" },
                       ]
                 }
               />
@@ -103,7 +122,9 @@ export default function LoginPage() {
                 className="mt-6 grid gap-4"
                 onSubmit={async (event) => {
                   event.preventDefault();
-                  setMessage((await login(loginForm.email, loginForm.password)).message);
+                  const result = await login(loginForm.email, loginForm.password, otp);
+                  setRequiresMfa(Boolean(result.requiresMfa));
+                  setMessage(result.message);
                 }}
               >
                 <div className="grid gap-2">
@@ -137,10 +158,26 @@ export default function LoginPage() {
                     placeholder="Enter password"
                   />
                 </div>
+                {requiresMfa ? (
+                  <div className="grid gap-2">
+                    <Label htmlFor="login-otp">Authenticator code</Label>
+                    <Input id="login-otp" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} required value={otp} onChange={(event) => setOtp(event.target.value.replace(/\D/g, ""))} placeholder="000000" />
+                  </div>
+                ) : null}
                 <Button type="submit" size="lg" className="mt-2 w-full">
                   Enter hotel operations
                   <SuiteIcon name="arrow" />
                 </Button>
+              </form>
+            ) : mode === "request" ? (
+              <form className="mt-6 grid gap-4" onSubmit={async (event) => { event.preventDefault(); const result = await requestPasswordReset(recoveryEmail); setMessage(result.resetUrl ? `${result.message} Development link: ${result.resetUrl}` : result.message); }}>
+                <div className="grid gap-2"><Label htmlFor="recovery-email">Account email</Label><Input id="recovery-email" type="email" required value={recoveryEmail} onChange={(event) => setRecoveryEmail(event.target.value)} placeholder="you@hotel.com" /></div>
+                <Button type="submit" size="lg" className="mt-2 w-full">Request password reset</Button>
+              </form>
+            ) : mode === "invite" || mode === "reset" ? (
+              <form className="mt-6 grid gap-4" onSubmit={async (event) => { event.preventDefault(); const result = mode === "invite" ? await acceptInvitation(accessToken, newPassword) : await resetPassword(accessToken, newPassword); setMessage(result.message); }}>
+                <div className="grid gap-2"><Label htmlFor="new-password">New secure password</Label><Input id="new-password" type="password" required minLength={12} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder="12+ characters, mixed case, number and symbol" /></div>
+                <Button type="submit" size="lg" className="mt-2 w-full">{mode === "invite" ? "Activate staff account" : "Reset password"}</Button>
               </form>
             ) : (
               <form
@@ -181,7 +218,7 @@ export default function LoginPage() {
                     id="owner-password"
                     type="password"
                     required
-                    minLength={8}
+                    minLength={12}
                     value={setupForm.password}
                     onChange={(event) =>
                       setSetupForm((current) => ({
@@ -189,7 +226,7 @@ export default function LoginPage() {
                         password: event.target.value,
                       }))
                     }
-                    placeholder="Minimum 8 characters"
+                    placeholder="12+ characters, mixed case, number and symbol"
                   />
                 </div>
                 <Button type="submit" size="lg" className="mt-2 w-full">

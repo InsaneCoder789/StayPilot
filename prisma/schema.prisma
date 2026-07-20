@@ -216,6 +216,8 @@ model Hotel {
   updatedAt          DateTime            @updatedAt
   users              User[]
   sessions           Session[]
+  staffInvitations   StaffInvitation[]
+  loginAttempts      LoginAttempt[]
   roomTypes          RoomType[]
   rooms              Room[]
   roomStatusLogs     RoomStatusLog[]
@@ -259,10 +261,16 @@ model User {
   shiftLabel    String?
   workload      String?
   lastLoginAt   DateTime?
+  failedLoginAttempts Int            @default(0)
+  lockedUntil        DateTime?
+  passwordChangedAt DateTime         @default(now())
+  mfaEnabled         Boolean          @default(false)
+  mfaSecretEncrypted String?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   hotel         Hotel          @relation(fields: [hotelId], references: [id], onDelete: Cascade)
   sessions      Session[]
+  passwordResetTokens PasswordResetToken[]
   auditLogs     AuditLog[]
   notifications Notification[]
 
@@ -279,6 +287,7 @@ model Session {
   expiresAt  DateTime
   userAgent  String?
   ipAddress  String?
+  deviceName String?
   createdAt  DateTime  @default(now())
   lastSeenAt DateTime  @default(now())
   revokedAt  DateTime?
@@ -287,6 +296,50 @@ model Session {
 
   @@index([userId, expiresAt])
   @@index([hotelId, revokedAt])
+}
+
+model StaffInvitation {
+  id            String    @id @default(cuid())
+  hotelId       String
+  email         String
+  name          String
+  role          UserRole
+  tokenHash     String    @unique
+  createdByName String
+  expiresAt     DateTime
+  acceptedAt    DateTime?
+  revokedAt     DateTime?
+  createdAt     DateTime  @default(now())
+  hotel         Hotel     @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+
+  @@index([hotelId, email, expiresAt])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model LoginAttempt {
+  id        String   @id @default(cuid())
+  hotelId   String?
+  email     String
+  ipAddress String?
+  success   Boolean
+  reason    String
+  createdAt DateTime @default(now())
+  hotel     Hotel?   @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+
+  @@index([email, createdAt])
+  @@index([ipAddress, createdAt])
+  @@index([hotelId, createdAt])
 }
 
 model RoomType {

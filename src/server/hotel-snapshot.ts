@@ -185,7 +185,7 @@ export async function getHotelSnapshot(hotelId: string): Promise<HotelSnapshot> 
     })),
     policies: hotel.policies.map((policy) => ({ id: policy.id, title: policy.title, category: policy.category, content: policy.content })),
     staff: hotel.users.map((user) => ({ id: user.id, name: user.name, role: user.role, shift: user.shiftLabel ?? "Unassigned", load: user.workload ?? "No active allocation" })),
-    users: hotel.users.map((user) => ({ id: user.id, name: user.name, email: user.email, role: user.role, active: user.status === "ACTIVE" })),
+    users: hotel.users.map((user) => ({ id: user.id, name: user.name, email: user.email, role: user.role, active: user.status === "ACTIVE", status: user.status, mfaEnabled: user.mfaEnabled })),
     roomCards: hotel.roomCards.map((card) => ({ id: card.id, roomNumber: card.room.roomNumber, guestName: card.guestName ?? undefined, status: card.status, accessType: card.accessType, issuedAt: card.issuedAt ? stamp(card.issuedAt) : undefined })),
     nfcEvents: hotel.accessEvents.map((event) => ({ id: event.id, cardId: event.cardId, roomNumber: event.card.room.roomNumber, guestName: event.card.guestName ?? undefined, event: event.event, location: event.location, occurredAt: stamp(event.occurredAt) })),
     blueprints: hotel.blueprints.map((blueprint) => ({ id: blueprint.id, name: blueprint.name, floor: blueprint.floor, updatedAt: stamp(blueprint.updatedAt), zones: blueprint.zones.map((zone) => ({ id: zone.id, label: zone.label, type: zone.type, linkedRoomNumber: zone.room?.roomNumber })) })),

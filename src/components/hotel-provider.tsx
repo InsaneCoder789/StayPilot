@@ -23,7 +23,7 @@ import type {
 } from "@/lib/hotel-data";
 import { initialHotelSnapshot } from "@/lib/hotel-data";
 
-type CommandResult = { ok: boolean; message: string; invoiceId?: string; receiptId?: string };
+type CommandResult = { ok: boolean; message: string; invoiceId?: string; receiptId?: string; requiresMfa?: boolean; resetUrl?: string; invitationUrl?: string; secret?: string; uri?: string };
 type BookingInput = { guestName: string; phone: string; email: string; roomType: string; checkIn: string; checkOut: string; source: string; specialRequests: string; totalAmount: number; companyName?: string };
 type ComplaintInput = { guestName: string; roomNumber?: string; message: string };
 type MaintenanceInput = { roomNumber?: string; title: string; category: string; assignee: string; priority: MaintenanceTicketRecord["priority"]; description: string; vendorName?: string };
@@ -43,10 +43,19 @@ type HotelContextType = {
   hydrated: boolean;
   hasUsers: boolean;
   refresh: () => Promise<void>;
-  login: (email: string, password: string) => Promise<CommandResult>;
+  login: (email: string, password: string, otp?: string) => Promise<CommandResult>;
   logout: () => Promise<void>;
   bootstrapOwner: (input: { name: string; email: string; password: string }) => Promise<CommandResult>;
+  requestPasswordReset: (email: string) => Promise<CommandResult>;
+  resetPassword: (token: string, password: string) => Promise<CommandResult>;
+  acceptInvitation: (token: string, password: string) => Promise<CommandResult>;
+  createInvitation: (input: { name: string; email: string; role: AuthUserRecord["role"] }) => Promise<CommandResult>;
+  setupMfa: () => Promise<CommandResult>;
+  enableMfa: (otp: string) => Promise<CommandResult>;
+  disableMfa: (password: string) => Promise<CommandResult>;
   createUser: (input: { name: string; email: string; password: string; role: AuthUserRecord["role"] }) => Promise<CommandResult>;
+  setUserStatus: (userId: string, status: "ACTIVE" | "DISABLED") => Promise<CommandResult>;
+  revokeUserSessions: (userId: string) => Promise<CommandResult>;
   resetHotelData: () => Promise<CommandResult>;
   setRoomStatus: (roomId: string, status: RoomStatus) => Promise<CommandResult>;
   createBooking: (input: BookingInput) => Promise<CommandResult>;
@@ -157,10 +166,19 @@ export function HotelProvider({ children }: { children: ReactNode }) {
 
   const value: HotelContextType = {
     state, currentUser, hydrated, hasUsers, refresh,
-    async login(email, password) { const result = await jsonRequest<CommandResult>("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }); if (result.ok) await refresh(); return result; },
+    async login(email, password, otp) { const result = await jsonRequest<CommandResult>("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password, otp: otp || undefined }) }); if (result.ok) await refresh(); return result; },
     async logout() { await jsonRequest("/api/auth/logout", { method: "POST" }); setCurrentUser(null); setState(initialHotelSnapshot); },
     async bootstrapOwner(input) { const result = await jsonRequest<CommandResult>("/api/auth/bootstrap", { method: "POST", body: JSON.stringify(input) }); if (result.ok) await refresh(); return result; },
+    requestPasswordReset: (email) => jsonRequest("/api/auth/password/request", { method: "POST", body: JSON.stringify({ email }) }),
+    resetPassword: (token, password) => jsonRequest("/api/auth/password/reset", { method: "POST", body: JSON.stringify({ token, password }) }),
+    async acceptInvitation(token, password) { const result = await jsonRequest<CommandResult>("/api/auth/invitations/accept", { method: "POST", body: JSON.stringify({ token, password }) }); if (result.ok) await refresh(); return result; },
+    createInvitation: (input) => jsonRequest("/api/auth/invitations", { method: "POST", body: JSON.stringify(input) }),
+    setupMfa: () => jsonRequest("/api/auth/mfa", { method: "POST", body: JSON.stringify({ action: "setup" }) }),
+    async enableMfa(otp) { const result = await jsonRequest<CommandResult>("/api/auth/mfa", { method: "POST", body: JSON.stringify({ action: "enable", otp }) }); if (result.ok) await refresh(); return result; },
+    async disableMfa(password) { const result = await jsonRequest<CommandResult>("/api/auth/mfa", { method: "POST", body: JSON.stringify({ action: "disable", password }) }); if (result.ok) await refresh(); return result; },
     createUser: (input) => command("createUser", input),
+    setUserStatus: (userId, status) => command("setUserStatus", { userId, status }),
+    revokeUserSessions: (userId) => command("revokeUserSessions", { userId }),
     resetHotelData: () => command("resetHotelData"),
     setRoomStatus: (roomId, status) => command("setRoomStatus", { roomId, status }),
     createBooking: (input) => command("createBooking", input),

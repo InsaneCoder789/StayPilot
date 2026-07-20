@@ -4,6 +4,7 @@ import { randomInt } from "node:crypto";
 import type { Prisma, User } from "@/generated/prisma/client";
 
 import { applyPayment, applyRefund, calculateTax } from "@/domain/finance";
+import { passwordPolicyError } from "@/domain/password-policy";
 import { hashPassword } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 
@@ -51,13 +52,37 @@ export async function executeHotelCommand(actor: Actor, action: string, payload:
 
   switch (action) {
     case "createUser": {
-      if (!text(payload, "name") || !text(payload, "email") || text(payload, "password").length < 8) return { ok: false, message: "Name, valid email, and an 8-character password are required." };
+      if (actor.role !== "HOTEL_ADMIN") return { ok: false, message: "Administrator access required." };
+      if (!text(payload, "name") || !text(payload, "email")) return { ok: false, message: "Name and valid email are required." };
+      const policyError = passwordPolicyError(text(payload, "password"));
+      if (policyError) return { ok: false, message: policyError };
       if (!['HOTEL_ADMIN','MANAGER','RECEPTIONIST','HOUSEKEEPING','MAINTENANCE','ACCOUNTANT'].includes(text(payload, "role"))) return { ok: false, message: "Invalid role." };
       const email = text(payload, "email").toLowerCase();
       if (await db.user.findFirst({ where: { hotelId: actor.hotelId, email } })) return { ok: false, message: "A user with this email already exists." };
       const user = await db.user.create({ data: { hotelId: actor.hotelId, name: text(payload, "name"), email, passwordHash: await hashPassword(text(payload, "password")), role: text(payload, "role") as User["role"], status: "ACTIVE", shiftLabel: "Unassigned", workload: "No active allocation" } });
       await db.auditLog.create({ data: { hotelId: actor.hotelId, userId: actor.id, actorName: actor.name, action: "CREATE_USER", entityType: "User", entityId: user.id, target: email } });
       return { ok: true, message: "User added." };
+    }
+    case "setUserStatus": {
+      if (actor.role !== "HOTEL_ADMIN") return { ok: false, message: "Administrator access required." };
+      const user = await db.user.findFirst({ where: { id: text(payload, "userId"), hotelId: actor.hotelId } });
+      const status = text(payload, "status") as "ACTIVE" | "DISABLED";
+      if (!user || !["ACTIVE", "DISABLED"].includes(status)) return { ok: false, message: "Invalid staff status update." };
+      if (user.id === actor.id && status === "DISABLED") return { ok: false, message: "You cannot disable your own account." };
+      await db.$transaction(async (tx) => {
+        await tx.user.update({ where: { id: user.id }, data: { status } });
+        if (status === "DISABLED") await tx.session.updateMany({ where: { userId: user.id, revokedAt: null }, data: { revokedAt: new Date() } });
+        await audit(tx, actor, "SET_USER_STATUS", "User", user.id, user.email, { status: user.status }, { status });
+      });
+      return { ok: true, message: `Staff account ${status === "ACTIVE" ? "enabled" : "disabled"}.` };
+    }
+    case "revokeUserSessions": {
+      if (actor.role !== "HOTEL_ADMIN") return { ok: false, message: "Administrator access required." };
+      const user = await db.user.findFirst({ where: { id: text(payload, "userId"), hotelId: actor.hotelId } });
+      if (!user) return { ok: false, message: "Staff account not found." };
+      const revoked = await db.session.updateMany({ where: { userId: user.id, revokedAt: null }, data: { revokedAt: new Date() } });
+      await db.auditLog.create({ data: { hotelId: actor.hotelId, userId: actor.id, actorName: actor.name, action: "REVOKE_USER_SESSIONS", entityType: "User", entityId: user.id, target: user.email } });
+      return { ok: true, message: `${revoked.count} session${revoked.count === 1 ? "" : "s"} revoked.` };
     }
     case "setRoomStatus": {
       const roomId = text(payload, "roomId");
