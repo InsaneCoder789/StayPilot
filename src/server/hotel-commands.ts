@@ -1,13 +1,15 @@
 import "server-only";
 
-import { randomInt } from "node:crypto";
 import type { Prisma, User } from "@/generated/prisma/client";
 
 import { applyPayment, applyRefund, calculateTax } from "@/domain/finance";
+import { getStripe } from "@/integrations/payments/stripe";
 import { passwordPolicyError } from "@/domain/password-policy";
 import { normalizeBusinessDate, stayNights } from "@/domain/reservations";
 import { hashPassword } from "@/lib/auth";
 import { getDb } from "@/lib/db";
+import { nextDocumentCode } from "@/server/document-sequence";
+import { captureInvoicePayment } from "@/server/payment-service";
 
 type Actor = Pick<User, "id" | "hotelId" | "name" | "role">;
 type Payload = Record<string, unknown>;
@@ -16,10 +18,10 @@ type Result = { ok: boolean; message: string; invoiceId?: string; receiptId?: st
 const roleCommands: Record<User["role"], string[] | "*"> = {
   HOTEL_ADMIN: "*",
   MANAGER: "*",
-  RECEPTIONIST: ["setRoomStatus", "createBooking", "assignBookingRoom", "updateBookingDates", "cancelBooking", "markBookingNoShow", "checkInBooking", "checkOutBooking", "extendStay", "moveRoom", "createGroupReservation", "createComplaint", "updateComplaintStatus", "createInvoice", "recordPayment", "updateGuestNotes", "issueRoomCard", "updateRoomCardStatus", "recordNfcEvent", "addDocument", "addNotification", "markNotificationRead", "createHandover"],
+  RECEPTIONIST: ["setRoomStatus", "createBooking", "assignBookingRoom", "updateBookingDates", "cancelBooking", "markBookingNoShow", "checkInBooking", "checkOutBooking", "extendStay", "moveRoom", "createGroupReservation", "createComplaint", "updateComplaintStatus", "createInvoice", "recordPayment", "openCashierShift", "recordCashMovement", "closeCashierShift", "updateGuestNotes", "issueRoomCard", "updateRoomCardStatus", "recordNfcEvent", "addDocument", "addNotification", "markNotificationRead", "createHandover"],
   HOUSEKEEPING: ["setRoomStatus", "updateHousekeepingStatus", "addInventoryItem", "adjustInventoryItem", "addNotification", "markNotificationRead", "createHandover"],
   MAINTENANCE: ["setRoomStatus", "createMaintenanceTicket", "updateMaintenanceStatus", "addInventoryItem", "adjustInventoryItem", "addVendor", "addDocument", "addNotification", "markNotificationRead", "createHandover"],
-  ACCOUNTANT: ["createInvoice", "recordPayment", "refundPayment", "togglePaymentGateway", "addDocument", "markNotificationRead", "runNightAudit"],
+  ACCOUNTANT: ["createInvoice", "recordPayment", "refundPayment", "createCreditNote", "openCashierShift", "recordCashMovement", "closeCashierShift", "reconcilePayments", "togglePaymentGateway", "addDocument", "markNotificationRead", "runNightAudit"],
 };
 
 export function canExecuteHotelCommand(role: User["role"], action: string) {
@@ -30,21 +32,6 @@ export function canExecuteHotelCommand(role: User["role"], action: string) {
 const text = (payload: Payload, key: string) => String(payload[key] ?? "").trim();
 const number = (payload: Payload, key: string) => Number(payload[key] ?? 0);
 const date = (value: unknown) => new Date(`${String(value)}T12:00:00.000Z`);
-
-async function nextDocumentCode(
-  tx: Prisma.TransactionClient,
-  hotelId: string,
-  kind: string,
-  prefix: string,
-  digits = 6,
-) {
-  const sequence = await tx.documentSequence.upsert({
-    where: { hotelId_kind: { hotelId, kind } },
-    create: { hotelId, kind, currentValue: 1 },
-    update: { currentValue: { increment: 1 } },
-  });
-  return `${prefix}-${new Date().getUTCFullYear()}-${String(sequence.currentValue).padStart(digits, "0")}`;
-}
 
 async function audit(
   tx: Prisma.TransactionClient,
@@ -359,41 +346,48 @@ export async function executeHotelCommand(actor: Actor, action: string, payload:
       const gateway = await db.paymentGateway.findUnique({ where: { hotelId_method: { hotelId: actor.hotelId, method } } });
       if (!invoice) return { ok: false, message: "Invoice not found." };
       if (!gateway?.enabled || gateway.status !== "READY") return { ok: false, message: `${method.replaceAll("_", " ")} gateway is offline.` };
+      const cashierShift = method === "CASH" ? await db.cashierShift.findFirst({ where: { hotelId: actor.hotelId, openedBy: actor.id, status: "OPEN" } }) : null;
+      if (method === "CASH" && !cashierShift) return { ok: false, message: "Open your cashier shift before accepting cash." };
       const requested = number(payload, "amount");
       if (requested <= 0 || Number(invoice.balanceAmount) <= 0) return { ok: false, message: "Enter a positive amount against an open balance." };
       const paymentState = applyPayment(Number(invoice.totalAmount), Number(invoice.paidAmount), requested);
-      const amount = paymentState.captured;
-      const receipt = await db.$transaction(async (tx) => {
-        const receiptNumber = await nextDocumentCode(tx, actor.hotelId, "RECEIPT", "RCT");
-        const payment = await tx.payment.create({ data: { hotelId: actor.hotelId, invoiceId: invoice.id, receiptNumber, guestName: invoice.guestName, amount, method, reference: text(payload, "reference") || `${method}-${randomInt(10_000_000, 99_999_999)}`, processedBy: actor.name } });
-        await tx.invoice.update({
-          where: { id: invoice.id },
-          data: { paidAmount: paymentState.paid, balanceAmount: paymentState.balance, status: paymentState.status },
-        });
-        if (invoice.bookingId) {
-          await tx.booking.update({
-            where: { id: invoice.bookingId },
-            data: { advancePaid: paymentState.paid, paymentStatus: paymentState.status },
-          });
-        }
-        const row = await tx.receipt.create({ data: { hotelId: actor.hotelId, paymentId: payment.id, invoiceId: invoice.id, receiptNumber, invoiceNumber: invoice.invoiceNumber, guestName: invoice.guestName, amount, method } });
-        await tx.document.create({ data: { hotelId: actor.hotelId, title: `Receipt ${receiptNumber}`, type: "RECEIPT", linkedRef: invoice.invoiceNumber } });
-        await audit(tx, actor, "CAPTURE_PAYMENT", "Payment", payment.id, `${receiptNumber} · AED ${amount.toFixed(2)}`);
-        return row;
-      }, { isolationLevel: "Serializable" });
-      return { ok: true, message: `${receipt.receiptNumber} issued.`, receiptId: receipt.id };
+      const payment = await captureInvoicePayment({
+        hotelId: actor.hotelId,
+        invoiceId: invoice.id,
+        amount: paymentState.captured,
+        method,
+        reference: text(payload, "reference") || `MANUAL-${crypto.randomUUID()}`,
+        processedBy: actor.name,
+        actorId: actor.id,
+        cashierShiftId: cashierShift?.id,
+      });
+      return { ok: true, message: `${payment.receiptNumber} issued.` };
     }
     case "refundPayment": {
       const payment = await db.payment.findFirst({ where: { id: text(payload, "paymentId"), hotelId: actor.hotelId }, include: { invoice: true } });
       if (!payment) return { ok: false, message: "Payment not found." };
       if (payment.status === "REFUNDED") return { ok: false, message: "Payment has already been refunded." };
+      const available = Number(payment.amount) - Number(payment.amountRefunded);
+      const amount = number(payload, "amount") || available;
+      if (amount <= 0 || amount > available) return { ok: false, message: `Refund must be between 0.01 and ${available.toFixed(2)}.` };
+      const refundReference = await db.$transaction((tx) => nextDocumentCode(tx, actor.hotelId, "REFUND", "REF"));
+      if (payment.provider === "STRIPE") {
+        if (!payment.providerPaymentId) return { ok: false, message: "Stripe payment reference is missing." };
+        try {
+          await getStripe().refunds.create({ payment_intent: payment.providerPaymentId, amount: Math.round(amount * 100), metadata: { hotel_id: actor.hotelId, payment_id: payment.id, refund_reference: refundReference } }, { idempotencyKey: refundReference });
+        } catch (error) {
+          console.error("Stripe refund failed", error);
+          return { ok: false, message: "Stripe rejected the refund; no local ledger changes were made." };
+        }
+      }
       await db.$transaction(async (tx) => {
-        const refundReference = await nextDocumentCode(tx, actor.hotelId, "REFUND", "REF");
-        await tx.payment.update({ where: { id: payment.id }, data: { status: "REFUNDED", refundedAt: new Date(), refundReference } });
+        const refunded = Number(payment.amountRefunded) + amount;
+        const fullyRefunded = Math.abs(refunded - Number(payment.amount)) < 0.001;
+        await tx.payment.update({ where: { id: payment.id }, data: { status: fullyRefunded ? "REFUNDED" : "PARTIALLY_REFUNDED", refundedAt: new Date(), refundReference, amountRefunded: refunded } });
         const refundState = applyRefund(
           Number(payment.invoice.totalAmount),
           Number(payment.invoice.paidAmount),
-          Number(payment.amount),
+          amount,
         );
         await tx.invoice.update({
           where: { id: payment.invoiceId },
@@ -405,9 +399,80 @@ export async function executeHotelCommand(actor: Actor, action: string, payload:
             data: { advancePaid: refundState.paid, paymentStatus: refundState.status },
           });
         }
-        await audit(tx, actor, "REFUND_PAYMENT", "Payment", payment.id, payment.receiptNumber);
+        await audit(tx, actor, "REFUND_PAYMENT", "Payment", payment.id, `${refundReference} · ${payment.invoice.currency} ${amount.toFixed(2)}`);
       }, { isolationLevel: "Serializable" });
-      return { ok: true, message: `${payment.receiptNumber} refunded.` };
+      return { ok: true, message: `${refundReference} issued for ${amount.toFixed(2)}.` };
+    }
+    case "createCreditNote": {
+      const invoice = await db.invoice.findFirst({ where: { id: text(payload, "invoiceId"), hotelId: actor.hotelId } });
+      const amount = number(payload, "amount");
+      const reason = text(payload, "reason");
+      if (!invoice) return { ok: false, message: "Invoice not found." };
+      if (!reason || amount <= 0 || amount > Number(invoice.balanceAmount)) return { ok: false, message: "Credit amount must be positive, within the open balance, and include a reason." };
+      const note = await db.$transaction(async (tx) => {
+        const creditNoteNumber = await nextDocumentCode(tx, actor.hotelId, "CREDIT_NOTE", "CRN");
+        const totalAmount = Number(invoice.totalAmount) - amount;
+        const balanceAmount = Math.max(totalAmount - Number(invoice.paidAmount), 0);
+        const row = await tx.creditNote.create({ data: { hotelId: actor.hotelId, invoiceId: invoice.id, creditNoteNumber, amount, reason, issuedBy: actor.name } });
+        await tx.invoice.update({ where: { id: invoice.id }, data: { totalAmount, balanceAmount, status: balanceAmount === 0 ? "PAID" : Number(invoice.paidAmount) > 0 ? "PARTIAL" : "UNPAID" } });
+        if (invoice.bookingId) await tx.booking.update({ where: { id: invoice.bookingId }, data: { totalAmount, paymentStatus: balanceAmount === 0 ? "PAID" : Number(invoice.paidAmount) > 0 ? "PARTIAL" : "UNPAID" } });
+        await tx.document.create({ data: { hotelId: actor.hotelId, title: `Credit note ${creditNoteNumber}`, type: "CREDIT_NOTE", linkedRef: invoice.invoiceNumber } });
+        await audit(tx, actor, "CREATE_CREDIT_NOTE", "CreditNote", row.id, `${creditNoteNumber} · ${invoice.currency} ${amount.toFixed(2)}`);
+        return row;
+      }, { isolationLevel: "Serializable" });
+      return { ok: true, message: `${note.creditNoteNumber} issued.` };
+    }
+    case "openCashierShift": {
+      const openingFloat = number(payload, "openingFloat");
+      if (openingFloat < 0) return { ok: false, message: "Opening float cannot be negative." };
+      const existing = await db.cashierShift.findFirst({ where: { hotelId: actor.hotelId, openedBy: actor.id, status: "OPEN" } });
+      if (existing) return { ok: false, message: "You already have an open cashier shift." };
+      await db.$transaction(async (tx) => {
+        const shift = await tx.cashierShift.create({ data: { hotelId: actor.hotelId, openedBy: actor.id, openingFloat, expectedCash: openingFloat, notes: text(payload, "notes") || null } });
+        await tx.cashMovement.create({ data: { hotelId: actor.hotelId, shiftId: shift.id, type: "OPENING_FLOAT", amount: openingFloat, createdBy: actor.name } });
+        await audit(tx, actor, "OPEN_CASHIER_SHIFT", "CashierShift", shift.id, `${openingFloat.toFixed(2)} opening float`);
+      });
+      return { ok: true, message: "Cashier shift opened." };
+    }
+    case "recordCashMovement": {
+      const shift = await db.cashierShift.findFirst({ where: { id: text(payload, "shiftId"), hotelId: actor.hotelId, status: "OPEN" } });
+      const movementType = text(payload, "type") as "CASH_IN" | "CASH_OUT" | "SAFE_DROP";
+      const amount = number(payload, "amount");
+      if (!shift || !["CASH_IN", "CASH_OUT", "SAFE_DROP"].includes(movementType) || amount <= 0) return { ok: false, message: "Choose an open shift, movement type, and positive amount." };
+      const delta = movementType === "CASH_IN" ? amount : -amount;
+      await db.$transaction(async (tx) => {
+        await tx.cashMovement.create({ data: { hotelId: actor.hotelId, shiftId: shift.id, type: movementType, amount, reference: text(payload, "reference") || null, note: text(payload, "note") || null, createdBy: actor.name } });
+        await tx.cashierShift.update({ where: { id: shift.id }, data: { expectedCash: { increment: delta } } });
+        await audit(tx, actor, "CASH_MOVEMENT", "CashierShift", shift.id, `${movementType} ${amount.toFixed(2)}`);
+      });
+      return { ok: true, message: "Cash movement recorded." };
+    }
+    case "closeCashierShift": {
+      const shift = await db.cashierShift.findFirst({ where: { id: text(payload, "shiftId"), hotelId: actor.hotelId, status: "OPEN" } });
+      const closingCash = number(payload, "closingCash");
+      if (!shift || closingCash < 0) return { ok: false, message: "Open shift and closing count are required." };
+      const cashPayments = await db.payment.aggregate({ where: { hotelId: actor.hotelId, cashierShiftId: shift.id, method: "CASH", status: { in: ["CAPTURED", "PARTIALLY_REFUNDED", "REFUNDED"] } }, _sum: { amount: true, amountRefunded: true } });
+      const expectedCash = Number(shift.expectedCash) + Number(cashPayments._sum.amount ?? 0) - Number(cashPayments._sum.amountRefunded ?? 0);
+      const variance = closingCash - expectedCash;
+      await db.$transaction(async (tx) => {
+        await tx.cashMovement.create({ data: { hotelId: actor.hotelId, shiftId: shift.id, type: "CLOSING_COUNT", amount: closingCash, note: text(payload, "notes") || null, createdBy: actor.name } });
+        await tx.cashierShift.update({ where: { id: shift.id }, data: { status: "CLOSED", closedBy: actor.id, closingCash, expectedCash, variance, closedAt: new Date() } });
+        await audit(tx, actor, "CLOSE_CASHIER_SHIFT", "CashierShift", shift.id, `Variance ${variance.toFixed(2)}`);
+      });
+      return { ok: true, message: `Shift closed with ${variance === 0 ? "no variance" : `${variance.toFixed(2)} variance`}.` };
+    }
+    case "reconcilePayments": {
+      const method = text(payload, "method") as "CASH" | "CARD" | "UPI" | "BANK_TRANSFER" | "OTA_VCC";
+      const periodStart = new Date(text(payload, "periodStart"));
+      const periodEnd = new Date(text(payload, "periodEnd"));
+      const actualAmount = number(payload, "actualAmount");
+      if (!method || Number.isNaN(periodStart.valueOf()) || Number.isNaN(periodEnd.valueOf()) || periodEnd <= periodStart || actualAmount < 0) return { ok: false, message: "Valid method, period, and actual settlement amount are required." };
+      const totals = await db.payment.aggregate({ where: { hotelId: actor.hotelId, method, processedAt: { gte: periodStart, lte: periodEnd }, status: { in: ["CAPTURED", "PARTIALLY_REFUNDED", "REFUNDED"] } }, _sum: { amount: true, amountRefunded: true } });
+      const expectedAmount = Number(totals._sum.amount ?? 0) - Number(totals._sum.amountRefunded ?? 0);
+      const variance = actualAmount - expectedAmount;
+      const run = await db.reconciliationRun.create({ data: { hotelId: actor.hotelId, method, provider: text(payload, "provider") || "MANUAL", periodStart, periodEnd, expectedAmount, actualAmount, variance, status: Math.abs(variance) < 0.01 ? "MATCHED" : "VARIANCE", reference: text(payload, "reference") || null, completedBy: actor.name } });
+      await db.auditLog.create({ data: { hotelId: actor.hotelId, userId: actor.id, actorName: actor.name, action: "RECONCILE_PAYMENTS", entityType: "ReconciliationRun", entityId: run.id, target: `${method} variance ${variance.toFixed(2)}` } });
+      return { ok: true, message: `Reconciliation ${run.status.toLowerCase()} with ${variance.toFixed(2)} variance.` };
     }
     case "togglePaymentGateway": {
       const gateway = await db.paymentGateway.findFirst({ where: { id: text(payload, "gatewayId"), hotelId: actor.hotelId } });
@@ -509,6 +574,12 @@ export async function executeHotelCommand(actor: Actor, action: string, payload:
     case "resetHotelData": {
       if (actor.role !== "HOTEL_ADMIN") return { ok: false, message: "Only the hotel administrator can reset operational data." };
       await db.$transaction(async (tx) => {
+        await tx.webhookEvent.deleteMany({ where: { hotelId: actor.hotelId } });
+        await tx.reconciliationRun.deleteMany({ where: { hotelId: actor.hotelId } });
+        await tx.cashMovement.deleteMany({ where: { hotelId: actor.hotelId } });
+        await tx.cashierShift.deleteMany({ where: { hotelId: actor.hotelId } });
+        await tx.creditNote.deleteMany({ where: { hotelId: actor.hotelId } });
+        await tx.paymentRequest.deleteMany({ where: { hotelId: actor.hotelId } });
         await tx.nfcAccessEvent.deleteMany({ where: { hotelId: actor.hotelId } });
         await tx.roomCard.deleteMany({ where: { hotelId: actor.hotelId } });
         await tx.receipt.deleteMany({ where: { hotelId: actor.hotelId } });

@@ -155,10 +155,70 @@ export type PaymentRecord = {
   guestName: string;
   amount: number;
   method: PaymentMethod;
-  status: "CAPTURED" | "REFUNDED";
+  status: "PENDING" | "CAPTURED" | "PARTIALLY_REFUNDED" | "REFUNDED";
+  amountRefunded: number;
+  provider: string;
   reference: string;
   processedAt: string;
   processedBy: string;
+};
+
+export type PaymentRequestRecord = {
+  id: string;
+  invoiceId: string;
+  provider: string;
+  amount: number;
+  currency: string;
+  status: "PENDING" | "COMPLETED" | "EXPIRED" | "CANCELLED" | "FAILED";
+  checkoutUrl?: string;
+  createdAt: string;
+};
+
+export type CashierShiftRecord = {
+  id: string;
+  openedBy: string;
+  openingFloat: number;
+  expectedCash: number;
+  closingCash?: number;
+  variance?: number;
+  status: "OPEN" | "CLOSED";
+  openedAt: string;
+  closedAt?: string;
+};
+
+export type CashMovementRecord = {
+  id: string;
+  shiftId: string;
+  type: "OPENING_FLOAT" | "CASH_IN" | "CASH_OUT" | "SAFE_DROP" | "CLOSING_COUNT";
+  amount: number;
+  reference?: string;
+  note?: string;
+  createdBy: string;
+  createdAt: string;
+};
+
+export type CreditNoteRecord = {
+  id: string;
+  invoiceId: string;
+  creditNoteNumber: string;
+  amount: number;
+  reason: string;
+  issuedBy: string;
+  issuedAt: string;
+};
+
+export type ReconciliationRecord = {
+  id: string;
+  method: PaymentMethod;
+  provider: string;
+  periodStart: string;
+  periodEnd: string;
+  expectedAmount: number;
+  actualAmount: number;
+  variance: number;
+  status: "MATCHED" | "VARIANCE" | "REVIEWED";
+  completedBy: string;
+  completedAt: string;
 };
 
 export type ReceiptRecord = {
@@ -245,7 +305,7 @@ export type PaymentGatewayRecord = {
 export type DocumentRecord = {
   id: string;
   title: string;
-  type: "INVOICE" | "POLICY" | "GUEST_FORM" | "ROOM_CARD_LOG" | "AUDIT" | "HANDOVER" | "RECEIPT" | "BLUEPRINT" | "OTHER";
+  type: "INVOICE" | "CREDIT_NOTE" | "POLICY" | "GUEST_FORM" | "ROOM_CARD_LOG" | "AUDIT" | "HANDOVER" | "RECEIPT" | "BLUEPRINT" | "OTHER";
   linkedRef: string;
   createdAt: string;
 };
@@ -339,6 +399,11 @@ export type HotelSnapshot = {
   complaints: ComplaintRecord[];
   invoices: InvoiceRecord[];
   payments: PaymentRecord[];
+  paymentRequests: PaymentRequestRecord[];
+  cashierShifts: CashierShiftRecord[];
+  cashMovements: CashMovementRecord[];
+  creditNotes: CreditNoteRecord[];
+  reconciliations: ReconciliationRecord[];
   receipts: ReceiptRecord[];
   policies: PolicyRecord[];
   staff: StaffRecord[];
@@ -418,6 +483,11 @@ export const initialHotelSnapshot: HotelSnapshot = {
   complaints: [],
   invoices: [],
   payments: [],
+  paymentRequests: [],
+  cashierShifts: [],
+  cashMovements: [],
+  creditNotes: [],
+  reconciliations: [],
   receipts: [],
   policies: [
     {

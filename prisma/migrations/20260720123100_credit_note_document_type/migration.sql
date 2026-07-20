@@ -1,0 +1,1 @@
+ALTER TYPE "DocumentType" ADD VALUE 'CREDIT_NOTE';

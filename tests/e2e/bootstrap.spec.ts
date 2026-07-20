@@ -122,3 +122,60 @@ test("reservation lifecycle prevents conflicts and coordinates room movement", a
     await db.$disconnect();
   }
 });
+
+test("finance lifecycle controls capture, refunds, credits, cashiering, and reconciliation", async ({ request }) => {
+  const email = "e2e-finance@staypilot.invalid";
+  const db = getDb();
+  await db.loginAttempt.deleteMany({ where: { email } });
+  await db.user.deleteMany({ where: { email } });
+
+  try {
+    expect((await request.post("/api/auth/bootstrap", { data: { name: "E2E Finance", email, password: "StayPilot!Finance2026" } })).ok()).toBe(true);
+    const command = async (action: string, payload: Record<string, unknown> = {}) => {
+      const response = await request.post("/api/hotel/command", { data: { action, payload } });
+      return response.json() as Promise<{ ok: boolean; message: string; state?: {
+        invoices: Array<{ id: string; invoiceNumber: string; paidAmount: number; balanceAmount: number }>;
+        payments: Array<{ id: string; status: string; amountRefunded: number }>;
+        cashierShifts: Array<{ id: string; status: string; variance?: number }>;
+        creditNotes: Array<{ creditNoteNumber: string; amount: number }>;
+        reconciliations: Array<{ status: string; variance: number }>;
+      } }>;
+    };
+
+    let result = await command("createInvoice", { guestName: "Ledger Guest", bookingCode: "DIRECT-FOLIO", lineItems: [{ label: "Conference room", amount: 100 }] });
+    const invoice = result.state!.invoices.find((row) => row.invoiceNumber.startsWith("INV-"))!;
+    expect((await command("openCashierShift", { openingFloat: 100 })).ok).toBe(true);
+
+    result = await command("recordPayment", { invoiceId: invoice.id, amount: 80, paymentMethod: "CASH", reference: "E2E-CASH-001" });
+    expect(result.ok).toBe(true);
+    const payment = result.state!.payments[0];
+    expect(result.state!.invoices.find((row) => row.id === invoice.id)).toMatchObject({ paidAmount: 80, balanceAmount: 20 });
+
+    result = await command("refundPayment", { paymentId: payment.id, amount: 20 });
+    expect(result.state!.payments[0]).toMatchObject({ status: "PARTIALLY_REFUNDED", amountRefunded: 20 });
+    expect(result.state!.invoices.find((row) => row.id === invoice.id)).toMatchObject({ paidAmount: 60, balanceAmount: 40 });
+
+    result = await command("createCreditNote", { invoiceId: invoice.id, amount: 10, reason: "Approved service recovery" });
+    expect(result.state!.creditNotes[0]).toMatchObject({ amount: 10 });
+    expect(result.state!.invoices.find((row) => row.id === invoice.id)).toMatchObject({ paidAmount: 60, balanceAmount: 30 });
+
+    const openShift = result.state!.cashierShifts.find((shift) => shift.status === "OPEN")!;
+    result = await command("closeCashierShift", { shiftId: openShift.id, closingCash: 160 });
+    expect(result.state!.cashierShifts[0]).toMatchObject({ status: "CLOSED", variance: 0 });
+
+    const end = new Date();
+    const start = new Date(end.getTime() - 60_000);
+    result = await command("reconcilePayments", { method: "CASH", provider: "MANUAL", periodStart: start.toISOString(), periodEnd: end.toISOString(), actualAmount: 60 });
+    expect(result.state!.reconciliations[0]).toMatchObject({ status: "MATCHED", variance: 0 });
+
+    const checkout = await request.post("/api/payments/checkout", { data: { invoiceId: invoice.id, amount: 10 } });
+    expect(checkout.status()).toBe(503);
+    await expect(checkout.json()).resolves.toMatchObject({ ok: false, message: "Stripe is not configured for this deployment." });
+    expect((await command("resetHotelData")).ok).toBe(true);
+  } finally {
+    await request.post("/api/hotel/command", { data: { action: "resetHotelData", payload: {} } });
+    await db.loginAttempt.deleteMany({ where: { email } });
+    await db.user.deleteMany({ where: { email } });
+    await db.$disconnect();
+  }
+});

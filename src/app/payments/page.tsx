@@ -12,8 +12,15 @@ import { PaymentMethod } from "@/lib/hotel-data";
 export default function PaymentsPage() {
   const {
     state,
+    currentUser,
     recordPayment,
+    createPaymentLink,
     refundPayment,
+    createCreditNote,
+    openCashierShift,
+    recordCashMovement,
+    closeCashierShift,
+    reconcilePayments,
     togglePaymentGateway,
   } = useHotel();
   const openInvoices = state.invoices.filter((invoice) => invoice.balanceAmount > 0);
@@ -24,10 +31,18 @@ export default function PaymentsPage() {
   );
   const [reference, setReference] = useState("");
   const [message, setMessage] = useState("");
+  const [refundAmounts, setRefundAmounts] = useState<Record<string, string>>({});
+  const [cashAmount, setCashAmount] = useState("");
+  const [cashNote, setCashNote] = useState("");
+  const [movementType, setMovementType] = useState<"CASH_IN" | "CASH_OUT" | "SAFE_DROP">("CASH_IN");
+  const [creditAmount, setCreditAmount] = useState("");
+  const [creditReason, setCreditReason] = useState("");
+  const [settlementAmount, setSettlementAmount] = useState("");
   const effectiveInvoiceId = invoiceId || openInvoices[0]?.id || "";
   const selectedInvoice = state.invoices.find(
     (invoice) => invoice.id === effectiveInvoiceId,
   );
+  const openShift = state.cashierShifts.find((shift) => shift.status === "OPEN" && shift.openedBy === currentUser?.id);
 
   const capturedTotal = state.payments
     .filter((payment) => payment.status === "CAPTURED")
@@ -141,6 +156,13 @@ export default function PaymentsPage() {
                 >
                   Capture and issue receipt
                 </button>
+                <button
+                  type="button"
+                  onClick={async () => setMessage((await createPaymentLink(effectiveInvoiceId, Number(amount))).message)}
+                  className="suite-button suite-button-secondary"
+                >
+                  Open secure Stripe checkout
+                </button>
                 {message ? <p className="text-sm text-[var(--muted)]">{message}</p> : null}
               </div>
             )}
@@ -202,6 +224,71 @@ export default function PaymentsPage() {
         </div>
       </section>
 
+      <section className="mt-8 grid gap-6 xl:grid-cols-3">
+        <div className="suite-bezel">
+          <div className="suite-core">
+            <span className="suite-eyebrow">Cash drawer</span>
+            <h2 className="mt-4 text-2xl font-semibold tracking-[-0.04em]">Cashier shift</h2>
+            <p className="mt-2 text-sm text-[var(--muted)]">{openShift ? `Open since ${openShift.openedAt}` : "No drawer is assigned to you."}</p>
+            <div className="mt-5 grid gap-3">
+              <input type="number" value={cashAmount} onChange={(event) => setCashAmount(event.target.value)} className="suite-input font-mono" placeholder={openShift ? "Movement or closing amount" : "Opening float"} />
+              {openShift ? (
+                <CustomSelect value={movementType} onChange={(value) => setMovementType(value as typeof movementType)} options={["CASH_IN", "CASH_OUT", "SAFE_DROP"].map((value) => ({ value, label: value.replaceAll("_", " ") }))} />
+              ) : null}
+              <input value={cashNote} onChange={(event) => setCashNote(event.target.value)} className="suite-input" placeholder="Count note or reason" />
+              <div className="grid grid-cols-2 gap-2">
+                <button type="button" className="suite-button suite-button-primary" onClick={async () => {
+                  const result = openShift ? await recordCashMovement(openShift.id, movementType, Number(cashAmount), cashNote) : await openCashierShift(Number(cashAmount), cashNote);
+                  setMessage(result.message);
+                  if (result.ok) { setCashAmount(""); setCashNote(""); }
+                }}>{openShift ? "Record movement" : "Open shift"}</button>
+                {openShift ? <button type="button" className="suite-button suite-button-secondary" onClick={async () => {
+                  const result = await closeCashierShift(openShift.id, Number(cashAmount), cashNote);
+                  setMessage(result.message);
+                  if (result.ok) { setCashAmount(""); setCashNote(""); }
+                }}>Close and count</button> : null}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="suite-bezel">
+          <div className="suite-core">
+            <span className="suite-eyebrow">Adjustments</span>
+            <h2 className="mt-4 text-2xl font-semibold tracking-[-0.04em]">Issue credit note</h2>
+            <div className="mt-5 grid gap-3">
+              <CustomSelect value={effectiveInvoiceId} onChange={setInvoiceId} options={openInvoices.map((invoice) => ({ value: invoice.id, label: `${invoice.invoiceNumber} · ${invoice.guestName}` }))} />
+              <input type="number" value={creditAmount} onChange={(event) => setCreditAmount(event.target.value)} className="suite-input font-mono" placeholder="Credit amount" />
+              <input value={creditReason} onChange={(event) => setCreditReason(event.target.value)} className="suite-input" placeholder="Mandatory adjustment reason" />
+              <button type="button" className="suite-button suite-button-primary" onClick={async () => {
+                const result = await createCreditNote(effectiveInvoiceId, Number(creditAmount), creditReason);
+                setMessage(result.message);
+                if (result.ok) { setCreditAmount(""); setCreditReason(""); }
+              }}>Issue controlled credit</button>
+            </div>
+          </div>
+        </div>
+
+        <div className="suite-bezel">
+          <div className="suite-core">
+            <span className="suite-eyebrow">Settlement</span>
+            <h2 className="mt-4 text-2xl font-semibold tracking-[-0.04em]">Reconcile today</h2>
+            <p className="mt-2 text-sm text-[var(--muted)]">Compare the recorded ledger with the provider or bank settlement.</p>
+            <div className="mt-5 grid gap-3">
+              <input type="number" value={settlementAmount} onChange={(event) => setSettlementAmount(event.target.value)} className="suite-input font-mono" placeholder="Actual settled amount" />
+              <button type="button" className="suite-button suite-button-primary" onClick={async () => {
+                const end = new Date();
+                const start = new Date(end); start.setHours(0, 0, 0, 0);
+                const result = await reconcilePayments({ method, provider: method === "CARD" ? "STRIPE" : "MANUAL", periodStart: start.toISOString(), periodEnd: end.toISOString(), actualAmount: Number(settlementAmount) });
+                setMessage(result.message);
+                if (result.ok) setSettlementAmount("");
+              }}>Run reconciliation</button>
+              {state.reconciliations[0] ? <p className="text-xs text-[var(--muted)]">Latest: {state.reconciliations[0].status} · variance AED {state.reconciliations[0].variance.toFixed(2)}</p> : null}
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section className="mt-8 suite-bezel">
         <div className="suite-core">
           <span className="suite-eyebrow">Ledger</span>
@@ -231,14 +318,24 @@ export default function PaymentsPage() {
                   <p className="font-mono text-sm tabular-nums">AED {payment.amount.toFixed(2)}</p>
                   <p className="text-sm text-[var(--muted)]">{payment.method.replaceAll("_", " ")}</p>
                   <StatusBadge value={payment.status} />
-                  <button
-                    type="button"
-                    onClick={async () => setMessage((await refundPayment(payment.id)).message)}
-                    disabled={payment.status === "REFUNDED"}
-                    className="suite-button suite-button-secondary disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    Refund
-                  </button>
+                  <div className="flex gap-2">
+                    <input
+                      type="number"
+                      value={refundAmounts[payment.id] ?? (payment.amount - payment.amountRefunded).toFixed(2)}
+                      onChange={(event) => setRefundAmounts((values) => ({ ...values, [payment.id]: event.target.value }))}
+                      disabled={payment.status === "REFUNDED"}
+                      className="suite-input min-w-24 font-mono"
+                      aria-label={`Refund amount for ${payment.receiptNumber}`}
+                    />
+                    <button
+                      type="button"
+                      onClick={async () => setMessage((await refundPayment(payment.id, Number(refundAmounts[payment.id] ?? payment.amount - payment.amountRefunded))).message)}
+                      disabled={payment.status === "REFUNDED"}
+                      className="suite-button suite-button-secondary disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Refund
+                    </button>
+                  </div>
                 </article>
               ))}
             </div>

@@ -23,7 +23,7 @@ import type {
 } from "@/lib/hotel-data";
 import { initialHotelSnapshot } from "@/lib/hotel-data";
 
-type CommandResult = { ok: boolean; message: string; invoiceId?: string; receiptId?: string; requiresMfa?: boolean; resetUrl?: string; invitationUrl?: string; secret?: string; uri?: string };
+type CommandResult = { ok: boolean; message: string; invoiceId?: string; receiptId?: string; requiresMfa?: boolean; resetUrl?: string; invitationUrl?: string; secret?: string; uri?: string; url?: string };
 type BookingInput = { guestName: string; phone: string; email: string; roomType: string; checkIn: string; checkOut: string; source: string; specialRequests: string; totalAmount: number; depositRequired?: number; companyName?: string };
 type ComplaintInput = { guestName: string; roomNumber?: string; message: string };
 type MaintenanceInput = { roomNumber?: string; title: string; category: string; assignee: string; priority: MaintenanceTicketRecord["priority"]; description: string; vendorName?: string };
@@ -75,7 +75,13 @@ type HotelContextType = {
   updateComplaintStatus: (complaintId: string, status: ComplaintRecord["status"]) => Promise<CommandResult>;
   createInvoice: (input: InvoiceInput) => Promise<CommandResult>;
   recordPayment: (invoiceId: string, amount: number, paymentMethod?: PaymentMethod, reference?: string) => Promise<CommandResult>;
-  refundPayment: (paymentId: string) => Promise<CommandResult>;
+  createPaymentLink: (invoiceId: string, amount: number) => Promise<CommandResult>;
+  refundPayment: (paymentId: string, amount?: number) => Promise<CommandResult>;
+  createCreditNote: (invoiceId: string, amount: number, reason: string) => Promise<CommandResult>;
+  openCashierShift: (openingFloat: number, notes?: string) => Promise<CommandResult>;
+  recordCashMovement: (shiftId: string, type: "CASH_IN" | "CASH_OUT" | "SAFE_DROP", amount: number, note?: string) => Promise<CommandResult>;
+  closeCashierShift: (shiftId: string, closingCash: number, notes?: string) => Promise<CommandResult>;
+  reconcilePayments: (input: { method: PaymentMethod; provider: string; periodStart: string; periodEnd: string; actualAmount: number; reference?: string }) => Promise<CommandResult>;
   togglePaymentGateway: (gatewayId: string) => Promise<CommandResult>;
   updateGuestNotes: (guestId: string, notes: string) => Promise<CommandResult>;
   updateHotelSettings: (payload: HotelSnapshot["hotel"]) => Promise<CommandResult>;
@@ -204,7 +210,17 @@ export function HotelProvider({ children }: { children: ReactNode }) {
     updateComplaintStatus: (complaintId, status) => command("updateComplaintStatus", { complaintId, status }),
     createInvoice: (input) => command("createInvoice", input),
     recordPayment: (invoiceId, amount, paymentMethod = "CASH", reference) => command("recordPayment", { invoiceId, amount, paymentMethod, reference }),
-    refundPayment: (paymentId) => command("refundPayment", { paymentId }),
+    async createPaymentLink(invoiceId, amount) {
+      const result = await jsonRequest<CommandResult>("/api/payments/checkout", { method: "POST", body: JSON.stringify({ invoiceId, amount }) });
+      if (result.ok && result.url) window.location.assign(result.url);
+      return result;
+    },
+    refundPayment: (paymentId, amount) => command("refundPayment", { paymentId, amount }),
+    createCreditNote: (invoiceId, amount, reason) => command("createCreditNote", { invoiceId, amount, reason }),
+    openCashierShift: (openingFloat, notes) => command("openCashierShift", { openingFloat, notes }),
+    recordCashMovement: (shiftId, type, amount, note) => command("recordCashMovement", { shiftId, type, amount, note }),
+    closeCashierShift: (shiftId, closingCash, notes) => command("closeCashierShift", { shiftId, closingCash, notes }),
+    reconcilePayments: (input) => command("reconcilePayments", input),
     togglePaymentGateway: (gatewayId) => command("togglePaymentGateway", { gatewayId }),
     updateGuestNotes: (guestId, notes) => command("updateGuestNotes", { guestId, notes }),
     updateHotelSettings: (settings) => command("updateHotelSettings", { settings }),
