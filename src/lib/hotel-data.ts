@@ -337,6 +337,73 @@ export type InventoryItemRecord = {
   vendorName?: string;
 };
 
+export type OperationalTaskRecord = {
+  id: string;
+  department: string;
+  title: string;
+  description: string;
+  priority: Priority;
+  status: "PENDING" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED";
+  assignee: string;
+  dueAt?: string;
+  createdBy: string;
+  createdAt: string;
+};
+
+export type PurchaseOrderRecord = {
+  id: string;
+  poNumber: string;
+  vendorId: string;
+  vendorName: string;
+  status: "DRAFT" | "SUBMITTED" | "APPROVED" | "ORDERED" | "PARTIALLY_RECEIVED" | "RECEIVED" | "CANCELLED";
+  totalAmount: number;
+  notes?: string;
+  requestedBy: string;
+  createdAt: string;
+  lines: Array<{ id: string; inventoryItemId: string; itemName: string; quantityOrdered: number; quantityReceived: number; unitCost: number }>;
+};
+
+export type InventoryMovementRecord = {
+  id: string;
+  inventoryItemId: string;
+  itemName: string;
+  type: "RECEIPT" | "ISSUE" | "ADJUSTMENT" | "WASTE" | "TRANSFER";
+  quantityDelta: number;
+  resultingStock: number;
+  reference?: string;
+  note?: string;
+  recordedBy: string;
+  createdAt: string;
+};
+
+export type IncidentRecord = {
+  id: string;
+  roomNumber?: string;
+  type: string;
+  title: string;
+  description: string;
+  severity: Priority;
+  status: "OPEN" | "INVESTIGATING" | "RESOLVED" | "CLOSED";
+  reportedBy: string;
+  assignedTo?: string;
+  occurredAt: string;
+};
+
+export type LostFoundRecord = {
+  id: string;
+  itemCode: string;
+  roomNumber?: string;
+  category: string;
+  description: string;
+  foundLocation: string;
+  storageLocation?: string;
+  status: "REPORTED" | "STORED" | "CLAIMED" | "RETURNED" | "DISPOSED";
+  guestName?: string;
+  guestContact?: string;
+  foundAt: string;
+  recordedBy: string;
+};
+
 export type VendorRecord = {
   id: string;
   name: string;
@@ -416,6 +483,11 @@ export type HotelSnapshot = {
   notifications: NotificationRecord[];
   auditLogs: AuditLogRecord[];
   inventory: InventoryItemRecord[];
+  operationalTasks: OperationalTaskRecord[];
+  purchaseOrders: PurchaseOrderRecord[];
+  inventoryMovements: InventoryMovementRecord[];
+  incidents: IncidentRecord[];
+  lostFound: LostFoundRecord[];
   vendors: VendorRecord[];
   groupReservations: GroupReservationRecord[];
   handovers: ShiftHandoverRecord[];
@@ -580,6 +652,11 @@ export const initialHotelSnapshot: HotelSnapshot = {
     { id: "inv-2", name: "Toiletry kits", category: "AMENITY", stockOnHand: 80, reorderLevel: 25 },
     { id: "inv-3", name: "Water bottles", category: "MINIBAR", stockOnHand: 240, reorderLevel: 90 },
   ],
+  operationalTasks: [],
+  purchaseOrders: [],
+  inventoryMovements: [],
+  incidents: [],
+  lostFound: [],
   vendors: [
     { id: "v-1", name: "Marina HVAC Services", category: "HVAC", contact: "+971500001001", sla: "4 hours" },
     { id: "v-2", name: "BlueWave Linen Supply", category: "LINEN", contact: "+971500001002", sla: "Next day" },

@@ -94,6 +94,15 @@ type HotelContextType = {
   addDocument: (document: Omit<DocumentRecord, "id" | "createdAt">) => Promise<CommandResult>;
   addInventoryItem: (input: InventoryInput) => Promise<CommandResult>;
   adjustInventoryItem: (itemId: string, nextStock: number) => Promise<CommandResult>;
+  createOperationalTask: (input: { department: string; title: string; description: string; priority: NotificationInput["severity"]; assignee?: string; dueAt?: string }) => Promise<CommandResult>;
+  updateOperationalTask: (taskId: string, status: "PENDING" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED", assignee?: string) => Promise<CommandResult>;
+  createIncident: (input: { roomNumber?: string; type: string; title: string; description: string; severity: NotificationInput["severity"]; assignedTo?: string }) => Promise<CommandResult>;
+  updateIncident: (incidentId: string, status: "OPEN" | "INVESTIGATING" | "RESOLVED" | "CLOSED", resolution?: string) => Promise<CommandResult>;
+  createLostFoundItem: (input: { roomNumber?: string; category: string; description: string; foundLocation: string; storageLocation?: string; guestName?: string; guestContact?: string }) => Promise<CommandResult>;
+  updateLostFoundItem: (itemId: string, status: "REPORTED" | "STORED" | "CLAIMED" | "RETURNED" | "DISPOSED", storageLocation?: string) => Promise<CommandResult>;
+  createPurchaseOrder: (vendorId: string, lines: Array<{ inventoryItemId: string; quantity: number; unitCost: number }>, notes?: string) => Promise<CommandResult>;
+  updatePurchaseOrderStatus: (purchaseOrderId: string, status: "SUBMITTED" | "APPROVED" | "ORDERED" | "CANCELLED") => Promise<CommandResult>;
+  receivePurchaseOrder: (purchaseOrderId: string, receipts: Array<{ lineId: string; quantity: number }>) => Promise<CommandResult>;
   addVendor: (input: VendorInput) => Promise<CommandResult>;
   addNotification: (input: NotificationInput) => Promise<CommandResult>;
   markNotificationRead: (notificationId: string) => Promise<CommandResult>;
@@ -113,7 +122,7 @@ export function roleAllows(role: StaffRole, area: string) {
     RECEPTIONIST: ["dashboard", "front-desk", "rooms", "bookings", "guests", "billing", "payments", "complaints", "documents", "room-cards", "access", "service-ops", "blueprints"],
     HOUSEKEEPING: ["dashboard", "rooms", "housekeeping", "service-ops"],
     MAINTENANCE: ["dashboard", "maintenance", "rooms", "service-ops", "documents"],
-    ACCOUNTANT: ["dashboard", "billing", "payments", "reports", "documents", "settings"],
+    ACCOUNTANT: ["dashboard", "billing", "payments", "reports", "documents", "procurement", "settings"],
   };
   return matrix[role].includes("*") || matrix[role].includes(area);
 }
@@ -233,6 +242,15 @@ export function HotelProvider({ children }: { children: ReactNode }) {
     addDocument: (document) => command("addDocument", document),
     addInventoryItem: (input) => command("addInventoryItem", input),
     adjustInventoryItem: (itemId, nextStock) => command("adjustInventoryItem", { itemId, nextStock }),
+    createOperationalTask: (input) => command("createOperationalTask", input),
+    updateOperationalTask: (taskId, status, assignee) => command("updateOperationalTask", { taskId, status, assignee }),
+    createIncident: (input) => command("createIncident", input),
+    updateIncident: (incidentId, status, resolution) => command("updateIncident", { incidentId, status, resolution }),
+    createLostFoundItem: (input) => command("createLostFoundItem", input),
+    updateLostFoundItem: (itemId, status, storageLocation) => command("updateLostFoundItem", { itemId, status, storageLocation }),
+    createPurchaseOrder: (vendorId, lines, notes) => command("createPurchaseOrder", { vendorId, lines, notes }),
+    updatePurchaseOrderStatus: (purchaseOrderId, status) => command("updatePurchaseOrderStatus", { purchaseOrderId, status }),
+    receivePurchaseOrder: (purchaseOrderId, receipts) => command("receivePurchaseOrder", { purchaseOrderId, receipts }),
     addVendor: (input) => command("addVendor", input),
     addNotification: (input) => command("addNotification", input),
     markNotificationRead: (notificationId) => command("markNotificationRead", { notificationId }),

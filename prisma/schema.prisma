@@ -90,6 +90,39 @@ enum ReconciliationStatus {
   REVIEWED
 }
 
+enum PurchaseOrderStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  ORDERED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+enum InventoryMovementType {
+  RECEIPT
+  ISSUE
+  ADJUSTMENT
+  WASTE
+  TRANSFER
+}
+
+enum IncidentStatus {
+  OPEN
+  INVESTIGATING
+  RESOLVED
+  CLOSED
+}
+
+enum LostFoundStatus {
+  REPORTED
+  STORED
+  CLAIMED
+  RETURNED
+  DISPOSED
+}
+
 enum InvoiceStatus {
   UNPAID
   PARTIAL
@@ -282,6 +315,11 @@ model Hotel {
   cashMovements      CashMovement[]
   creditNotes        CreditNote[]
   reconciliations    ReconciliationRun[]
+  operationalTasks   OperationalTask[]
+  purchaseOrders     PurchaseOrder[]
+  inventoryMovements InventoryMovement[]
+  incidents          Incident[]
+  lostFoundItems     LostFoundItem[]
 }
 
 model DocumentSequence {
@@ -433,6 +471,8 @@ model Room {
   roomCards          RoomCard[]
   zones              BlueprintZone[]
   statusLogs         RoomStatusLog[]
+  incidents          Incident[]
+  lostFoundItems     LostFoundItem[]
 
   @@unique([hotelId, roomNumber])
   @@index([hotelId, floor, status])
@@ -575,6 +615,7 @@ model Vendor {
   hotel              Hotel               @relation(fields: [hotelId], references: [id], onDelete: Cascade)
   inventoryItems     InventoryItem[]
   maintenanceTickets MaintenanceTicket[]
+  purchaseOrders     PurchaseOrder[]
 
   @@unique([hotelId, name])
   @@index([hotelId, category, active])
@@ -1008,7 +1049,7 @@ model AuditLog {
 }
 
 model InventoryItem {
-  id              String            @id @default(cuid())
+  id              String              @id @default(cuid())
   hotelId         String
   vendorId        String?
   name            String
@@ -1016,17 +1057,145 @@ model InventoryItem {
   category        InventoryCategory
   stockOnHand     Int
   reorderLevel    Int
-  unit            String            @default("unit")
-  unitCost        Decimal?          @db.Decimal(12, 2)
+  unit            String              @default("unit")
+  unitCost        Decimal?            @db.Decimal(12, 2)
   storageLocation String?
-  active          Boolean           @default(true)
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
-  hotel           Hotel             @relation(fields: [hotelId], references: [id], onDelete: Cascade)
-  vendor          Vendor?           @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  active          Boolean             @default(true)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  hotel           Hotel               @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  vendor          Vendor?             @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  movements       InventoryMovement[]
+  purchaseLines   PurchaseOrderLine[]
 
   @@unique([hotelId, sku])
   @@index([hotelId, category, active])
+}
+
+model OperationalTask {
+  id          String     @id @default(cuid())
+  hotelId     String
+  department  String
+  title       String
+  description String
+  priority    Priority
+  status      WorkStatus @default(PENDING)
+  assignee    String     @default("Unassigned")
+  dueAt       DateTime?
+  sourceType  String?
+  sourceId    String?
+  completedAt DateTime?
+  createdBy   String
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  hotel       Hotel      @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+
+  @@index([hotelId, status, priority, dueAt])
+  @@index([hotelId, department, createdAt])
+}
+
+model PurchaseOrder {
+  id          String              @id @default(cuid())
+  hotelId     String
+  vendorId    String
+  poNumber    String
+  status      PurchaseOrderStatus @default(DRAFT)
+  totalAmount Decimal             @default(0) @db.Decimal(12, 2)
+  notes       String?
+  requestedBy String
+  approvedBy  String?
+  submittedAt DateTime?
+  approvedAt  DateTime?
+  orderedAt   DateTime?
+  receivedAt  DateTime?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  hotel       Hotel               @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  vendor      Vendor              @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  lines       PurchaseOrderLine[]
+
+  @@unique([hotelId, poNumber])
+  @@index([hotelId, status, createdAt])
+  @@index([vendorId, status])
+}
+
+model PurchaseOrderLine {
+  id               String        @id @default(cuid())
+  purchaseOrderId  String
+  inventoryItemId  String
+  quantityOrdered  Int
+  quantityReceived Int           @default(0)
+  unitCost         Decimal       @db.Decimal(12, 2)
+  createdAt        DateTime      @default(now())
+  purchaseOrder    PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  inventoryItem    InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Restrict)
+
+  @@unique([purchaseOrderId, inventoryItemId])
+  @@index([inventoryItemId])
+}
+
+model InventoryMovement {
+  id              String                @id @default(cuid())
+  hotelId         String
+  inventoryItemId String
+  type            InventoryMovementType
+  quantityDelta   Int
+  resultingStock  Int
+  reference       String?
+  note            String?
+  recordedBy      String
+  createdAt       DateTime              @default(now())
+  hotel           Hotel                 @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  inventoryItem   InventoryItem         @relation(fields: [inventoryItemId], references: [id], onDelete: Restrict)
+
+  @@index([hotelId, createdAt])
+  @@index([inventoryItemId, createdAt])
+}
+
+model Incident {
+  id          String         @id @default(cuid())
+  hotelId     String
+  roomId      String?
+  type        String
+  title       String
+  description String
+  severity    Priority
+  status      IncidentStatus @default(OPEN)
+  reportedBy  String
+  assignedTo  String?
+  occurredAt  DateTime
+  resolvedAt  DateTime?
+  resolution  String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  hotel       Hotel          @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  room        Room?          @relation(fields: [roomId], references: [id], onDelete: SetNull)
+
+  @@index([hotelId, status, severity, occurredAt])
+}
+
+model LostFoundItem {
+  id              String          @id @default(cuid())
+  hotelId         String
+  roomId          String?
+  itemCode        String
+  category        String
+  description     String
+  foundLocation   String
+  storageLocation String?
+  status          LostFoundStatus @default(REPORTED)
+  guestName       String?
+  guestContact    String?
+  foundAt         DateTime
+  claimedAt       DateTime?
+  recordedBy      String
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  hotel           Hotel           @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  room            Room?           @relation(fields: [roomId], references: [id], onDelete: SetNull)
+
+  @@unique([hotelId, itemCode])
+  @@index([hotelId, status, foundAt])
 }
 
 model ShiftHandover {

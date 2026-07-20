@@ -63,6 +63,7 @@ const navigation: Array<{ label: string; items: NavItem[] }> = [
       { href: "/housekeeping", label: "Housekeeping", area: "housekeeping", icon: "sparkle", keywords: "clean dirty inspect" },
       { href: "/maintenance", label: "Engineering", area: "maintenance", icon: "wrench", keywords: "repair work order" },
       { href: "/inventory", label: "Inventory", area: "service-ops", icon: "box", keywords: "stock supplies" },
+      { href: "/procurement", label: "Procurement", area: "procurement", icon: "box", keywords: "purchase order receiving vendor" },
       { href: "/vendors", label: "Vendors", area: "service-ops", icon: "handover" },
       { href: "/blueprints", label: "Blueprints", area: "blueprints", icon: "blueprint", keywords: "floor plan zones" },
     ],

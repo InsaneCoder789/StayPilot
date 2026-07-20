@@ -18,10 +18,10 @@ type Result = { ok: boolean; message: string; invoiceId?: string; receiptId?: st
 const roleCommands: Record<User["role"], string[] | "*"> = {
   HOTEL_ADMIN: "*",
   MANAGER: "*",
-  RECEPTIONIST: ["setRoomStatus", "createBooking", "assignBookingRoom", "updateBookingDates", "cancelBooking", "markBookingNoShow", "checkInBooking", "checkOutBooking", "extendStay", "moveRoom", "createGroupReservation", "createComplaint", "updateComplaintStatus", "createInvoice", "recordPayment", "openCashierShift", "recordCashMovement", "closeCashierShift", "updateGuestNotes", "issueRoomCard", "updateRoomCardStatus", "recordNfcEvent", "addDocument", "addNotification", "markNotificationRead", "createHandover"],
-  HOUSEKEEPING: ["setRoomStatus", "updateHousekeepingStatus", "addInventoryItem", "adjustInventoryItem", "addNotification", "markNotificationRead", "createHandover"],
-  MAINTENANCE: ["setRoomStatus", "createMaintenanceTicket", "updateMaintenanceStatus", "addInventoryItem", "adjustInventoryItem", "addVendor", "addDocument", "addNotification", "markNotificationRead", "createHandover"],
-  ACCOUNTANT: ["createInvoice", "recordPayment", "refundPayment", "createCreditNote", "openCashierShift", "recordCashMovement", "closeCashierShift", "reconcilePayments", "togglePaymentGateway", "addDocument", "markNotificationRead", "runNightAudit"],
+  RECEPTIONIST: ["setRoomStatus", "createBooking", "assignBookingRoom", "updateBookingDates", "cancelBooking", "markBookingNoShow", "checkInBooking", "checkOutBooking", "extendStay", "moveRoom", "createGroupReservation", "createComplaint", "updateComplaintStatus", "createOperationalTask", "updateOperationalTask", "createIncident", "updateIncident", "createLostFoundItem", "updateLostFoundItem", "createInvoice", "recordPayment", "openCashierShift", "recordCashMovement", "closeCashierShift", "updateGuestNotes", "issueRoomCard", "updateRoomCardStatus", "recordNfcEvent", "addDocument", "addNotification", "markNotificationRead", "createHandover"],
+  HOUSEKEEPING: ["setRoomStatus", "updateHousekeepingStatus", "createOperationalTask", "updateOperationalTask", "createLostFoundItem", "updateLostFoundItem", "addInventoryItem", "adjustInventoryItem", "addNotification", "markNotificationRead", "createHandover"],
+  MAINTENANCE: ["setRoomStatus", "createMaintenanceTicket", "updateMaintenanceStatus", "createOperationalTask", "updateOperationalTask", "createIncident", "updateIncident", "addInventoryItem", "adjustInventoryItem", "addVendor", "addDocument", "addNotification", "markNotificationRead", "createHandover"],
+  ACCOUNTANT: ["createInvoice", "recordPayment", "refundPayment", "createCreditNote", "openCashierShift", "recordCashMovement", "closeCashierShift", "reconcilePayments", "createPurchaseOrder", "updatePurchaseOrderStatus", "receivePurchaseOrder", "togglePaymentGateway", "addDocument", "markNotificationRead", "runNightAudit"],
 };
 
 export function canExecuteHotelCommand(role: User["role"], action: string) {
@@ -536,14 +536,139 @@ export async function executeHotelCommand(actor: Actor, action: string, payload:
     case "addDocument":
       await db.document.create({ data: { hotelId: actor.hotelId, title: text(payload, "title"), type: text(payload, "type") as "INVOICE" | "POLICY" | "GUEST_FORM" | "ROOM_CARD_LOG" | "AUDIT" | "HANDOVER" | "RECEIPT" | "BLUEPRINT" | "OTHER", linkedRef: text(payload, "linkedRef") } });
       return { ok: true, message: "Document record added." };
+    case "createOperationalTask": {
+      const title = text(payload, "title");
+      const department = text(payload, "department");
+      if (!title || !department) return { ok: false, message: "Task title and department are required." };
+      const dueAt = text(payload, "dueAt") ? new Date(text(payload, "dueAt")) : null;
+      if (dueAt && Number.isNaN(dueAt.valueOf())) return { ok: false, message: "Task due date is invalid." };
+      const task = await db.operationalTask.create({ data: { hotelId: actor.hotelId, department, title, description: text(payload, "description"), priority: text(payload, "priority") as "LOW" | "MEDIUM" | "HIGH" | "URGENT", assignee: text(payload, "assignee") || "Unassigned", dueAt, sourceType: text(payload, "sourceType") || null, sourceId: text(payload, "sourceId") || null, createdBy: actor.name } });
+      await db.auditLog.create({ data: { hotelId: actor.hotelId, userId: actor.id, actorName: actor.name, action: "CREATE_OPERATIONAL_TASK", entityType: "OperationalTask", entityId: task.id, target: `${department} · ${title}` } });
+      return { ok: true, message: "Department task created." };
+    }
+    case "updateOperationalTask": {
+      const task = await db.operationalTask.findFirst({ where: { id: text(payload, "taskId"), hotelId: actor.hotelId } });
+      const status = text(payload, "status") as "PENDING" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED";
+      if (!task || !["PENDING", "IN_PROGRESS", "COMPLETED", "CANCELLED"].includes(status)) return { ok: false, message: "Task or status is invalid." };
+      await db.$transaction(async (tx) => {
+        await tx.operationalTask.update({ where: { id: task.id }, data: { status, assignee: text(payload, "assignee") || task.assignee, completedAt: status === "COMPLETED" ? new Date() : null } });
+        await audit(tx, actor, "UPDATE_OPERATIONAL_TASK", "OperationalTask", task.id, task.title, { status: task.status }, { status });
+      });
+      return { ok: true, message: "Department task updated." };
+    }
+    case "createIncident": {
+      const room = text(payload, "roomNumber") ? await db.room.findFirst({ where: { hotelId: actor.hotelId, roomNumber: text(payload, "roomNumber") } }) : null;
+      if (!text(payload, "title") || !text(payload, "description")) return { ok: false, message: "Incident title and factual description are required." };
+      const incident = await db.$transaction(async (tx) => {
+        const row = await tx.incident.create({ data: { hotelId: actor.hotelId, roomId: room?.id, type: text(payload, "type") || "GENERAL", title: text(payload, "title"), description: text(payload, "description"), severity: text(payload, "severity") as "LOW" | "MEDIUM" | "HIGH" | "URGENT", reportedBy: actor.name, assignedTo: text(payload, "assignedTo") || null, occurredAt: text(payload, "occurredAt") ? new Date(text(payload, "occurredAt")) : new Date() } });
+        await tx.notification.create({ data: { hotelId: actor.hotelId, title: `Incident: ${row.title}`, message: `${row.type}${room ? ` · Room ${room.roomNumber}` : ""}`, severity: row.severity, audience: "MANAGER" } });
+        await audit(tx, actor, "CREATE_INCIDENT", "Incident", row.id, row.title);
+        return row;
+      });
+      return { ok: true, message: `Incident ${incident.id.slice(-6).toUpperCase()} logged.` };
+    }
+    case "updateIncident": {
+      const incident = await db.incident.findFirst({ where: { id: text(payload, "incidentId"), hotelId: actor.hotelId } });
+      const status = text(payload, "status") as "OPEN" | "INVESTIGATING" | "RESOLVED" | "CLOSED";
+      if (!incident || !["OPEN", "INVESTIGATING", "RESOLVED", "CLOSED"].includes(status)) return { ok: false, message: "Incident or status is invalid." };
+      if (["RESOLVED", "CLOSED"].includes(status) && !text(payload, "resolution")) return { ok: false, message: "Resolution notes are required to close an incident." };
+      await db.$transaction(async (tx) => {
+        await tx.incident.update({ where: { id: incident.id }, data: { status, assignedTo: text(payload, "assignedTo") || incident.assignedTo, resolution: text(payload, "resolution") || incident.resolution, resolvedAt: ["RESOLVED", "CLOSED"].includes(status) ? new Date() : null } });
+        await audit(tx, actor, "UPDATE_INCIDENT", "Incident", incident.id, incident.title, { status: incident.status }, { status });
+      });
+      return { ok: true, message: "Incident updated." };
+    }
+    case "createLostFoundItem": {
+      const room = text(payload, "roomNumber") ? await db.room.findFirst({ where: { hotelId: actor.hotelId, roomNumber: text(payload, "roomNumber") } }) : null;
+      if (!text(payload, "description") || !text(payload, "foundLocation")) return { ok: false, message: "Item description and found location are required." };
+      const item = await db.$transaction(async (tx) => {
+        const itemCode = await nextDocumentCode(tx, actor.hotelId, "LOST_FOUND", "LNF");
+        const row = await tx.lostFoundItem.create({ data: { hotelId: actor.hotelId, roomId: room?.id, itemCode, category: text(payload, "category") || "OTHER", description: text(payload, "description"), foundLocation: text(payload, "foundLocation"), storageLocation: text(payload, "storageLocation") || null, status: text(payload, "storageLocation") ? "STORED" : "REPORTED", guestName: text(payload, "guestName") || null, guestContact: text(payload, "guestContact") || null, foundAt: new Date(), recordedBy: actor.name } });
+        await audit(tx, actor, "CREATE_LOST_FOUND", "LostFoundItem", row.id, itemCode);
+        return row;
+      });
+      return { ok: true, message: `${item.itemCode} registered.` };
+    }
+    case "updateLostFoundItem": {
+      const item = await db.lostFoundItem.findFirst({ where: { id: text(payload, "itemId"), hotelId: actor.hotelId } });
+      const status = text(payload, "status") as "REPORTED" | "STORED" | "CLAIMED" | "RETURNED" | "DISPOSED";
+      if (!item || !["REPORTED", "STORED", "CLAIMED", "RETURNED", "DISPOSED"].includes(status)) return { ok: false, message: "Custody item or status is invalid." };
+      await db.$transaction(async (tx) => {
+        await tx.lostFoundItem.update({ where: { id: item.id }, data: { status, storageLocation: text(payload, "storageLocation") || item.storageLocation, guestName: text(payload, "guestName") || item.guestName, guestContact: text(payload, "guestContact") || item.guestContact, claimedAt: ["CLAIMED", "RETURNED"].includes(status) ? new Date() : item.claimedAt } });
+        await audit(tx, actor, "UPDATE_LOST_FOUND", "LostFoundItem", item.id, item.itemCode, { status: item.status }, { status });
+      });
+      return { ok: true, message: `${item.itemCode} custody updated.` };
+    }
+    case "createPurchaseOrder": {
+      const vendor = await db.vendor.findFirst({ where: { id: text(payload, "vendorId"), hotelId: actor.hotelId, active: true } });
+      const lines = Array.isArray(payload.lines) ? payload.lines.filter((line): line is { inventoryItemId: string; quantity: number; unitCost: number } => Boolean(line && typeof line === "object" && "inventoryItemId" in line && "quantity" in line && "unitCost" in line)).map((line) => ({ inventoryItemId: String(line.inventoryItemId), quantity: Number(line.quantity), unitCost: Number(line.unitCost) })).filter((line) => line.inventoryItemId && Number.isInteger(line.quantity) && line.quantity > 0 && line.unitCost >= 0) : [];
+      if (!vendor || lines.length === 0) return { ok: false, message: "Active vendor and at least one valid order line are required." };
+      const itemCount = await db.inventoryItem.count({ where: { hotelId: actor.hotelId, id: { in: lines.map((line) => line.inventoryItemId) } } });
+      if (itemCount !== new Set(lines.map((line) => line.inventoryItemId)).size) return { ok: false, message: "One or more stock items are invalid." };
+      const totalAmount = lines.reduce((sum, line) => sum + line.quantity * line.unitCost, 0);
+      const order = await db.$transaction(async (tx) => {
+        const poNumber = await nextDocumentCode(tx, actor.hotelId, "PURCHASE_ORDER", "PO");
+        const row = await tx.purchaseOrder.create({ data: { hotelId: actor.hotelId, vendorId: vendor.id, poNumber, status: "SUBMITTED", totalAmount, notes: text(payload, "notes") || null, requestedBy: actor.name, submittedAt: new Date(), lines: { create: lines.map((line) => ({ inventoryItemId: line.inventoryItemId, quantityOrdered: line.quantity, unitCost: line.unitCost })) } } });
+        await audit(tx, actor, "CREATE_PURCHASE_ORDER", "PurchaseOrder", row.id, `${poNumber} · ${totalAmount.toFixed(2)}`);
+        return row;
+      });
+      return { ok: true, message: `${order.poNumber} submitted for approval.` };
+    }
+    case "updatePurchaseOrderStatus": {
+      const order = await db.purchaseOrder.findFirst({ where: { id: text(payload, "purchaseOrderId"), hotelId: actor.hotelId } });
+      const status = text(payload, "status") as "SUBMITTED" | "APPROVED" | "ORDERED" | "CANCELLED";
+      if (!order) return { ok: false, message: "Purchase order not found." };
+      const transitions: Record<string, string[]> = { DRAFT: ["SUBMITTED", "CANCELLED"], SUBMITTED: ["APPROVED", "CANCELLED"], APPROVED: ["ORDERED", "CANCELLED"], ORDERED: ["CANCELLED"] };
+      if (!transitions[order.status]?.includes(status)) return { ok: false, message: `${order.status} orders cannot move to ${status}.` };
+      if (status === "APPROVED" && !["HOTEL_ADMIN", "MANAGER"].includes(actor.role)) return { ok: false, message: "Manager approval is required." };
+      await db.$transaction(async (tx) => {
+        await tx.purchaseOrder.update({ where: { id: order.id }, data: { status, approvedBy: status === "APPROVED" ? actor.name : order.approvedBy, approvedAt: status === "APPROVED" ? new Date() : order.approvedAt, orderedAt: status === "ORDERED" ? new Date() : order.orderedAt } });
+        await audit(tx, actor, "UPDATE_PURCHASE_ORDER", "PurchaseOrder", order.id, `${order.poNumber} · ${status}`);
+      });
+      return { ok: true, message: `${order.poNumber} moved to ${status}.` };
+    }
+    case "receivePurchaseOrder": {
+      const order = await db.purchaseOrder.findFirst({ where: { id: text(payload, "purchaseOrderId"), hotelId: actor.hotelId, status: { in: ["ORDERED", "PARTIALLY_RECEIVED"] } }, include: { lines: true } });
+      const receipts = Array.isArray(payload.receipts) ? payload.receipts.filter((row): row is { lineId: string; quantity: number } => Boolean(row && typeof row === "object" && "lineId" in row && "quantity" in row)).map((row) => ({ lineId: String(row.lineId), quantity: Number(row.quantity) })).filter((row) => row.lineId && Number.isInteger(row.quantity) && row.quantity > 0) : [];
+      if (!order || receipts.length === 0) return { ok: false, message: "Ordered purchase order and received quantities are required." };
+      try {
+        await db.$transaction(async (tx) => {
+          for (const receipt of receipts) {
+            const line = order.lines.find((candidate) => candidate.id === receipt.lineId);
+            if (!line || line.quantityReceived + receipt.quantity > line.quantityOrdered) throw new Error("RECEIPT_EXCEEDS_ORDER");
+            const item = await tx.inventoryItem.findFirstOrThrow({ where: { id: line.inventoryItemId, hotelId: actor.hotelId } });
+            const resultingStock = item.stockOnHand + receipt.quantity;
+            await tx.purchaseOrderLine.update({ where: { id: line.id }, data: { quantityReceived: { increment: receipt.quantity } } });
+            await tx.inventoryItem.update({ where: { id: item.id }, data: { stockOnHand: resultingStock } });
+            await tx.inventoryMovement.create({ data: { hotelId: actor.hotelId, inventoryItemId: item.id, type: "RECEIPT", quantityDelta: receipt.quantity, resultingStock, reference: order.poNumber, recordedBy: actor.name } });
+          }
+          const updated = await tx.purchaseOrderLine.findMany({ where: { purchaseOrderId: order.id } });
+          const complete = updated.every((line) => line.quantityReceived >= line.quantityOrdered);
+          await tx.purchaseOrder.update({ where: { id: order.id }, data: { status: complete ? "RECEIVED" : "PARTIALLY_RECEIVED", receivedAt: complete ? new Date() : null } });
+          await audit(tx, actor, "RECEIVE_PURCHASE_ORDER", "PurchaseOrder", order.id, order.poNumber);
+        }, { isolationLevel: "Serializable" });
+      } catch (error) {
+        if (error instanceof Error && error.message === "RECEIPT_EXCEEDS_ORDER") return { ok: false, message: "Received quantity exceeds the outstanding order." };
+        throw error;
+      }
+      return { ok: true, message: `${order.poNumber} receipt posted to stock.` };
+    }
     case "addInventoryItem": {
       const vendor = text(payload, "vendorName") ? await db.vendor.findFirst({ where: { hotelId: actor.hotelId, name: text(payload, "vendorName") } }) : null;
       await db.inventoryItem.create({ data: { hotelId: actor.hotelId, vendorId: vendor?.id, name: text(payload, "name"), category: text(payload, "category") as "LINEN" | "AMENITY" | "MINIBAR" | "HOUSEKEEPING" | "ENGINEERING", stockOnHand: number(payload, "stockOnHand"), reorderLevel: number(payload, "reorderLevel") } });
       return { ok: true, message: "Inventory item added." };
     }
-    case "adjustInventoryItem":
-      await db.inventoryItem.updateMany({ where: { id: text(payload, "itemId"), hotelId: actor.hotelId }, data: { stockOnHand: Math.max(0, number(payload, "nextStock")) } });
-      return { ok: true, message: "Inventory adjusted." };
+    case "adjustInventoryItem": {
+      const item = await db.inventoryItem.findFirst({ where: { id: text(payload, "itemId"), hotelId: actor.hotelId } });
+      if (!item) return { ok: false, message: "Inventory item not found." };
+      const nextStock = Math.max(0, Math.trunc(number(payload, "nextStock")));
+      await db.$transaction(async (tx) => {
+        await tx.inventoryItem.update({ where: { id: item.id }, data: { stockOnHand: nextStock } });
+        await tx.inventoryMovement.create({ data: { hotelId: actor.hotelId, inventoryItemId: item.id, type: "ADJUSTMENT", quantityDelta: nextStock - item.stockOnHand, resultingStock: nextStock, note: text(payload, "note") || "Manual stock count", recordedBy: actor.name } });
+        await audit(tx, actor, "ADJUST_INVENTORY", "InventoryItem", item.id, item.name, { stockOnHand: item.stockOnHand }, { stockOnHand: nextStock });
+      });
+      return { ok: true, message: "Inventory count adjusted with movement history." };
+    }
     case "addVendor":
       await db.vendor.create({ data: { hotelId: actor.hotelId, name: text(payload, "name"), category: text(payload, "category") as "HVAC" | "PLUMBING" | "LINEN" | "IT" | "SUPPLIER", contact: text(payload, "contact"), sla: text(payload, "sla") } });
       return { ok: true, message: "Vendor added." };
@@ -574,6 +699,11 @@ export async function executeHotelCommand(actor: Actor, action: string, payload:
     case "resetHotelData": {
       if (actor.role !== "HOTEL_ADMIN") return { ok: false, message: "Only the hotel administrator can reset operational data." };
       await db.$transaction(async (tx) => {
+        await tx.inventoryMovement.deleteMany({ where: { hotelId: actor.hotelId } });
+        await tx.purchaseOrder.deleteMany({ where: { hotelId: actor.hotelId } });
+        await tx.operationalTask.deleteMany({ where: { hotelId: actor.hotelId } });
+        await tx.incident.deleteMany({ where: { hotelId: actor.hotelId } });
+        await tx.lostFoundItem.deleteMany({ where: { hotelId: actor.hotelId } });
         await tx.webhookEvent.deleteMany({ where: { hotelId: actor.hotelId } });
         await tx.reconciliationRun.deleteMany({ where: { hotelId: actor.hotelId } });
         await tx.cashMovement.deleteMany({ where: { hotelId: actor.hotelId } });

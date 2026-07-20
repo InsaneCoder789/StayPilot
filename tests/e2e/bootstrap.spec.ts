@@ -179,3 +179,62 @@ test("finance lifecycle controls capture, refunds, credits, cashiering, and reco
     await db.$disconnect();
   }
 });
+
+test("operations lifecycle controls tasks, incidents, custody, procurement, and stock", async ({ request }) => {
+  const email = "e2e-operations@staypilot.invalid";
+  const db = getDb();
+  await db.loginAttempt.deleteMany({ where: { email } });
+  await db.user.deleteMany({ where: { email } });
+  let inventoryId: string | undefined;
+  let originalStock = 0;
+
+  try {
+    expect((await request.post("/api/auth/bootstrap", { data: { name: "E2E Operations", email, password: "StayPilot!Operations2026" } })).ok()).toBe(true);
+    const command = async (action: string, payload: Record<string, unknown> = {}) => {
+      const response = await request.post("/api/hotel/command", { data: { action, payload } });
+      return response.json() as Promise<{ ok: boolean; message: string; state?: {
+        operationalTasks: Array<{ id: string; status: string }>;
+        incidents: Array<{ id: string; status: string }>;
+        lostFound: Array<{ id: string; itemCode: string; status: string }>;
+        vendors: Array<{ id: string }>;
+        inventory: Array<{ id: string; stockOnHand: number }>;
+        purchaseOrders: Array<{ id: string; status: string; lines: Array<{ id: string; quantityOrdered: number; quantityReceived: number }> }>;
+        inventoryMovements: Array<{ type: string; quantityDelta: number }>;
+      } }>;
+    };
+
+    let result = await command("createOperationalTask", { department: "SECURITY", title: "Inspect loading dock", description: "Confirm seal and CCTV coverage", priority: "HIGH" });
+    const taskId = result.state!.operationalTasks[0].id;
+    result = await command("updateOperationalTask", { taskId, status: "COMPLETED" });
+    expect(result.state!.operationalTasks[0].status).toBe("COMPLETED");
+
+    result = await command("createIncident", { type: "SAFETY", title: "Wet loading bay", description: "Area isolated and warning signs installed", severity: "HIGH" });
+    const incidentId = result.state!.incidents[0].id;
+    result = await command("updateIncident", { incidentId, status: "RESOLVED", resolution: "Drain cleared and floor dried" });
+    expect(result.state!.incidents[0].status).toBe("RESOLVED");
+
+    result = await command("createLostFoundItem", { category: "PERSONAL", description: "Black travel wallet", foundLocation: "Lobby sofa", storageLocation: "Safe A-03" });
+    const custody = result.state!.lostFound[0];
+    expect(custody.itemCode).toMatch(/^LNF-/);
+    result = await command("updateLostFoundItem", { itemId: custody.id, status: "RETURNED" });
+    expect(result.state!.lostFound[0].status).toBe("RETURNED");
+
+    const vendorId = result.state!.vendors[0].id;
+    inventoryId = result.state!.inventory[0].id;
+    originalStock = result.state!.inventory[0].stockOnHand;
+    result = await command("createPurchaseOrder", { vendorId, lines: [{ inventoryItemId: inventoryId, quantity: 5, unitCost: 3.5 }], notes: "E2E supply control" });
+    const purchaseOrderId = result.state!.purchaseOrders[0].id;
+    expect((await command("updatePurchaseOrderStatus", { purchaseOrderId, status: "APPROVED" })).ok).toBe(true);
+    expect((await command("updatePurchaseOrderStatus", { purchaseOrderId, status: "ORDERED" })).ok).toBe(true);
+    result = await command("receivePurchaseOrder", { purchaseOrderId, receipts: [{ lineId: result.state!.purchaseOrders[0].lines[0].id, quantity: 5 }] });
+    expect(result.state!.purchaseOrders[0].status).toBe("RECEIVED");
+    expect(result.state!.inventory.find((item) => item.id === inventoryId)?.stockOnHand).toBe(originalStock + 5);
+    expect(result.state!.inventoryMovements[0]).toMatchObject({ type: "RECEIPT", quantityDelta: 5 });
+  } finally {
+    if (inventoryId) await db.inventoryItem.update({ where: { id: inventoryId }, data: { stockOnHand: originalStock } });
+    await request.post("/api/hotel/command", { data: { action: "resetHotelData", payload: {} } });
+    await db.loginAttempt.deleteMany({ where: { email } });
+    await db.user.deleteMany({ where: { email } });
+    await db.$disconnect();
+  }
+});
